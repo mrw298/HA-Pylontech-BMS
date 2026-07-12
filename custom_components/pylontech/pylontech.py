@@ -370,6 +370,52 @@ class PwrDetailCommand:
                 self.system_fault = value
 
 
+@dataclass
+class BatCell:
+    """One cell's data from a row of the `bat <index>` per-cell table."""
+
+    index: int
+    volt: float  # V
+    balancing: bool
+
+
+class BatPackCommand:
+    """Parses the `bat <index>` per-cell table for one pack.
+
+    Reads only the cell voltage (token 1) and the balancing flag (last
+    token). Using the first, second and last tokens avoids the two-token
+    `Coulomb` field ("92713 mAH"), which would otherwise shift positional
+    indices. Malformed rows are skipped.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by parsing every cell row."""
+        self.cells: list[BatCell] = []
+        for line in lines:
+            tokens = line.split()
+            if len(tokens) < 3 or not tokens[0].isdigit():
+                continue
+            try:
+                cell = BatCell(
+                    index=int(tokens[0]),
+                    volt=int(tokens[1]) / 1000,
+                    balancing=tokens[-1] == "Y",
+                )
+            except (ValueError, IndexError):
+                continue
+            self.cells.append(cell)
+
+    @property
+    def cell_voltages(self) -> list[float]:
+        """Return per-cell voltages in the order the cells were reported."""
+        return [cell.volt for cell in self.cells]
+
+    @property
+    def balancing_count(self) -> int:
+        """Return the number of cells currently balancing."""
+        return sum(1 for cell in self.cells if cell.balancing)
+
+
 class BatCommand:
     """Pylontech BMS console command 'bat'."""
 

@@ -1,0 +1,16 @@
+Battery  Volt     Curr     Tempr    Base State   Volt. State  Curr. State  Temp. State  SOC          Coulomb      BAL
+0        3525     388      27400    Charge       Normal       Normal       Normal       100%         45449 mAH      N
+1        3453     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+2        3454     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+3        3455     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+4        3450     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+5        3459     388      27300    Charge       Normal       Normal       Normal       99%         44788 mAH      N
+6        3448     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+7        3448     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+8        3449     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+9        3562     388      27300    Charge       High         Normal       Normal       100%         45449 mAH      N
+10       3455     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+11       3456     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+12       3457     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+13       3451     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+14       3403     388      27200    Charge       Normal       Normal       Normal       100%         45447 mAH      N
