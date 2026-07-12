@@ -422,7 +422,7 @@ _STAT_PROTECTION_KEYS = (
     "Pwr OV Times", "Pwr HV Times", "Pwr LV Times", "Pwr UV Times",
     "COT Times", "CUT Times", "DOT Times", "DUT Times",
     "CHT Times", "CLT Times", "DHT Times", "DLT Times",
-    "Input OV Times",
+    "Input OV Times", "RV Times", "BMICERR Times",
 )
 
 
@@ -434,7 +434,7 @@ class StatCommand:
     real cycle count (`CYCLE Times`) and a summed protection/fault-event count.
     """
 
-    def __init__(self, lines) -> None:
+    def __init__(self, lines: tuple[str]) -> None:
         """Initialize by parsing the key/value statistics lines."""
         fields: dict[str, str] = {}
         for line in lines:
