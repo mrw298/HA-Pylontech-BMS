@@ -30,8 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bat <index>` command.
 - Real per-pack cycle count (from `stat <index>` `CYCLE Times`) and a summed
   protection/fault-event diagnostic sensor (~0 on healthy packs, large on a
-  failing one). Note: this raises the console poll to ~19 commands per cycle
-  for a six-pack stack, so on slow serial/ser2net links updates may space out.
+  failing one). `stat` is polled at most every 30 minutes and cached between
+  polls, so the steady-state console poll stays at ~13 commands/cycle for a
+  six-pack stack (briefly ~19 once every 30 minutes).
 
 ## [1.1.0] - 2024-11-12
 
