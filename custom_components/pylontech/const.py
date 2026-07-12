@@ -11,6 +11,10 @@ PLATFORMS = [Platform.SENSOR]
 DEFAULT_NAME = "Pylontech BMS"
 SCAN_INTERVAL = timedelta(seconds=30)
 
+# `stat` reports slow-moving lifetime counters (cycle count, fault totals),
+# so it is polled at most this often rather than every SCAN_INTERVAL cycle.
+STAT_SCAN_INTERVAL_SECONDS = 1800  # 30 minutes
+
 KEY_COORDINATOR = "coordinator"
 
 # Configuration keys

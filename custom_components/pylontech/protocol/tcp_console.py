@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 from asyncio import StreamReader, StreamWriter
 import logging
+import time
 from typing import Any
 
 from .base import ProtocolBase
-from ..const import BatteryVariant, ConnectionType
+from ..const import BatteryVariant, ConnectionType, STAT_SCAN_INTERVAL_SECONDS
 from ..models import BatteryData, BMUData, DeviceInfo
 
 # Import all sensor and command classes from parent pylontech module
@@ -59,6 +60,11 @@ class TCPConsoleProtocol(ProtocolBase):
         # Cached flat `pwr` response for the current connection (cleared on
         # connect/disconnect) so pack_count and every per-pack fetch reuse it.
         self._pwr_lines: tuple[str, ...] | None = None
+        # `stat` is polled on a slower cadence than the 30 s cycle; these
+        # persist ACROSS connections (unlike the pwr cache) and are not
+        # cleared on connect/disconnect.
+        self._stat_cache: dict[int, tuple[int | None, int | None]] = {}
+        self._stat_deadline: float | None = None
 
     async def connect(self) -> None:
         """Establish TCP connection to BMS console."""
@@ -138,6 +144,25 @@ class TCPConsoleProtocol(ProtocolBase):
         if self._pwr_lines is None:
             self._pwr_lines = await self._exec_cmd("pwr")
         return self._pwr_lines
+
+    async def _stat_for_pack(self, pack_id: int) -> tuple[int | None, int | None]:
+        """Return (cycle_count, protection_events) for a pack from `stat`.
+
+        `stat` carries slow-moving lifetime counters, so it is fetched at most
+        once per STAT_SCAN_INTERVAL_SECONDS and cached across update cycles.
+        A failed fetch is not cached, so it retries on the next cycle.
+        """
+        now = time.monotonic()
+        if self._stat_deadline is None or now >= self._stat_deadline:
+            self._stat_cache = {}
+            self._stat_deadline = now + STAT_SCAN_INTERVAL_SECONDS
+        if pack_id not in self._stat_cache:
+            try:
+                stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+            except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+                return (None, None)
+            self._stat_cache[pack_id] = (stat.cycle_count, stat.protection_events)
+        return self._stat_cache[pack_id]
 
     async def get_device_info(self, pack_id: int | None = None) -> DeviceInfo:
         """Retrieve device information.
@@ -222,12 +247,7 @@ class TCPConsoleProtocol(ProtocolBase):
         if detail.system_fault is not None:
             status_groups["system_fault"] = detail.system_fault
 
-        try:
-            stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
-        except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
-            stat = None
-        cycle_count = stat.cycle_count if stat is not None else None
-        protection_events = stat.protection_events if stat is not None else None
+        cycle_count, protection_events = await self._stat_for_pack(pack_id)
 
         return BatteryData(
             pack_voltage=pack.volt,
