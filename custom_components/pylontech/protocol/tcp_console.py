@@ -195,7 +195,9 @@ class TCPConsoleProtocol(ProtocolBase):
         except Exception:  # noqa: BLE001 - device may not support 'bat <index>'
             bat = None
         cell_voltages = bat.cell_voltages if bat is not None else []
-        cells_balancing = bat.balancing_count if bat is not None else None
+        # A bat reply that parses to zero cells is treated as "unsupported"
+        # (None), not a real count of 0, keeping the None-vs-0 distinction.
+        cells_balancing = bat.balancing_count if (bat is not None and bat.cells) else None
 
         remaining = (
             detail.total_capacity * pack.soc / 100
