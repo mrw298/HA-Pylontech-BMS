@@ -27,6 +27,7 @@ Establish a `pytest` harness that can import `pylontech.py` standalone (without 
 - Create: `tests/conftest.py`
 - Create: `tests/fixtures/pwr_flat.txt`
 - Create: `tests/fixtures/pwr_flat_mixed.txt`
+- Create: `tests/fixtures/pwr_flat_discharge.txt`
 - Create: `tests/fixtures/pwr_detail_pack1.txt`
 - Create: `tests/test_import.py`
 
@@ -106,6 +107,31 @@ Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  Volt.St  Curr.St
 4     50537  0      28900  26700  26900  3367   3371   Idle     Normal   Normal   Normal   100%     2026-07-12 11:03:39  Normal   Normal  28300    Normal
 5     50545  -642   28900  26500  26800  3367   3373   Dischg   Normal   Normal   Normal   100%     2026-07-12 11:03:38  Normal   Normal  27900    Normal
 6     50545  -516   28500  25900  26000  3367   3373   Dischg   Normal   Normal   Normal   100%     2026-07-12 11:03:39  Normal   Normal  27500    Normal
+7     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+8     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+9     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+10    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+11    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+12    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+13    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+14    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+15    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+16    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+```
+
+- [ ] **Step 3c: Create the all-discharge fixture**
+
+Create `tests/fixtures/pwr_flat_discharge.txt` (verbatim capture, all six packs
+discharging with large negative currents):
+
+```
+Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St   MosTempr M.T.St
+1     50430  -17300 29300  27200  27700  3360   3363   Dischg   Normal   Normal   Normal   98%      2026-07-12 11:05:52  Normal   Normal  28700    Normal
+2     50455  -16444 28800  27000  27700  3362   3368   Dischg   Normal   Normal   Normal   98%      2026-07-12 11:05:50  Normal   Normal  28300    Normal
+3     50446  -1883  29300  27100  27200  3298   3375   Dischg   Normal   Normal   Normal   96%      2026-07-12 11:05:51  Normal   Normal  28300    Normal
+4     50443  -8974  28900  26800  26900  3358   3365   Dischg   Normal   Normal   Normal   100%     2026-07-12 11:05:51  Normal   Normal  28300    Normal
+5     50452  -8470  29000  26500  26800  3359   3371   Dischg   Normal   Normal   Normal   100%     2026-07-12 11:05:50  Normal   Normal  27900    Normal
+6     50420  -9228  28600  26000  26000  3356   3369   Dischg   Normal   Normal   Normal   100%     2026-07-12 11:05:51  Normal   Normal  27500    Normal
 7     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
 8     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
 9     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
@@ -265,6 +291,15 @@ def test_current_sign_charge_idle_discharge():
     assert table.pack(6).curr == pytest.approx(-0.516)
 
 
+def test_all_packs_discharging():
+    table = pylontech.PwrTableCommand(read_fixture("pwr_flat_discharge.txt"))
+    assert table.pack_count == 6
+    assert table.pack(1).curr == pytest.approx(-17.3)
+    assert table.pack(1).base_state == "Dischg"
+    assert all(p.base_state == "Dischg" for p in table.packs.values())
+    assert all(p.curr < 0 for p in table.packs.values())
+
+
 def test_corrupted_or_garbage_rows_are_skipped():
     # Real serial noise: a truncated absent fragment and a non-ASCII first
     # token. Neither is a valid present-pack row, so both are ignored.
@@ -369,7 +404,7 @@ class PwrTableCommand:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_pwr_table.py -v`
-Expected: PASS (8 passed).
+Expected: PASS (9 passed).
 
 - [ ] **Step 5: Commit**
 

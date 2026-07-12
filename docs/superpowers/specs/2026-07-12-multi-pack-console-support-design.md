@@ -268,9 +268,12 @@ bytes (`ʘu`). `_exec_cmd` decodes each line as ASCII, so a non-ASCII byte would
 raise `UnicodeDecodeError` and fail the whole update cycle. The fix is to
 decode with `errors="replace"`, so a noisy byte becomes a replacement
 character and the malformed line is simply skipped by the parser (it never
-matches a present-pack row). The `pwr <index>` detail view may also gain an
-extra `Charge Sec.` line while charging; the key/value detail parser ignores
-unknown keys, so this is handled without change.
+matches a present-pack row). The `pwr <index>` detail view also gains an
+extra transient line while active (`Charge Sec.` when charging, `Discharge
+Sec.` when discharging), and its `Current` value is negative when
+discharging; the key/value detail parser ignores unknown keys and does not
+read the detail current (it uses the flat table's signed current), so both are
+handled without change.
 
 ## Open dependency
 
