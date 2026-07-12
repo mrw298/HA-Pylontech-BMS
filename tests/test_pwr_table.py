@@ -84,6 +84,13 @@ def test_corrupted_or_garbage_rows_are_skipped():
     assert table.packs == {}
 
 
+def test_pack_cell_voltage_delta_mv():
+    table = pylontech.PwrTableCommand(read_fixture("pwr_flat.txt"))
+    # pack 1: Vlow 3330, Vhigh 3331 -> 1 mV; pack 3: 3324..3333 -> 9 mV
+    assert table.pack(1).cell_volt_delta_mv == 1
+    assert table.pack(3).cell_volt_delta_mv == 9
+
+
 def test_present_row_with_corrupt_numeric_is_skipped():
     # A row that passes the present-row check but has a corrupt numeric token
     # (e.g. a replacement char from serial-noise decoding) must be skipped

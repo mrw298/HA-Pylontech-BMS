@@ -164,6 +164,8 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             result["cell_volt_low"] = data.cell_volt_low
         if data.cell_volt_high is not None:
             result["cell_volt_high"] = data.cell_volt_high
+        if data.cell_volt_delta is not None:
+            result["cell_volt_delta"] = data.cell_volt_delta
         if data.unit_volt_low is not None:
             result["unit_volt_low"] = data.unit_volt_low
         if data.unit_volt_high is not None:

@@ -281,6 +281,11 @@ class PwrPack:
     temp_state: str
     soc: int  # %
 
+    @property
+    def cell_volt_delta_mv(self) -> int:
+        """Cell voltage spread (highest - lowest cell voltage) in mV."""
+        return round((self.cell_volt_high - self.cell_volt_low) * 1000)
+
 
 class PwrTableCommand:
     """Parses the flat multi-pack `pwr` table (one row per pack slot).

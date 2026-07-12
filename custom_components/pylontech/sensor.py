@@ -61,6 +61,7 @@ SENSOR_MAPPINGS: dict[str, tuple[str, SensorDeviceClass | None, str | None, Sens
     # Voltage extremes
     "cell_volt_low": ("Lowest Cell Voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, SensorStateClass.MEASUREMENT),
     "cell_volt_high": ("Highest Cell Voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, SensorStateClass.MEASUREMENT),
+    "cell_volt_delta": ("Cell Voltage Delta", None, "mV", SensorStateClass.MEASUREMENT),
     "unit_volt_low": ("Lowest Unit Voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, SensorStateClass.MEASUREMENT),
     "unit_volt_high": ("Highest Unit Voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, SensorStateClass.MEASUREMENT),
 
