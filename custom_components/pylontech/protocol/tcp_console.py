@@ -266,6 +266,7 @@ class TCPConsoleProtocol(ProtocolBase):
             temp_state=pack.temp_state,
             cell_volt_low=pack.cell_volt_low,
             cell_volt_high=pack.cell_volt_high,
+            cell_volt_delta=pack.cell_volt_delta_mv,
             cell_temp_low=pack.cell_temp_low,
             cell_temp_high=pack.cell_temp_high,
             cells_balancing=cells_balancing,

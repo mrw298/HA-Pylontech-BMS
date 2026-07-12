@@ -83,6 +83,9 @@ class BatteryData:
     # Summed protection/fault events (console stat command)
     protection_events: int | None = None
 
+    # Cell voltage spread (highest - lowest) in mV (console pwr table)
+    cell_volt_delta: int | None = None
+
 
 @dataclass
 class DeviceInfo:
