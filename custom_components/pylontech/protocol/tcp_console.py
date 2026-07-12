@@ -24,8 +24,11 @@ from pylontech import (
     BatCommand,
     InfoCommand,
     PwrCommand,
+    PwrDetailCommand,
+    PwrTableCommand,
     UnitCommand,
     Sensor,
+    is_flat_pwr,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,12 +54,16 @@ class TCPConsoleProtocol(ProtocolBase):
         self.port = port
         self.reader: StreamReader | None = None
         self.writer: StreamWriter | None = None
+        # Cached flat `pwr` response for the current connection (cleared on
+        # connect/disconnect) so pack_count and every per-pack fetch reuse it.
+        self._pwr_lines: tuple[str, ...] | None = None
 
     async def connect(self) -> None:
         """Establish TCP connection to BMS console."""
         self.reader, self.writer = await asyncio.wait_for(
             asyncio.open_connection(self.host, self.port), 5
         )
+        self._pwr_lines = None
         _LOGGER.debug("Connected to %s:%s", self.host, self.port)
 
     async def disconnect(self) -> None:
@@ -66,6 +73,7 @@ class TCPConsoleProtocol(ProtocolBase):
             await self.writer.wait_closed()
             self.reader = None
             self.writer = None
+            self._pwr_lines = None
             _LOGGER.debug("Disconnected from %s:%s", self.host, self.port)
 
     async def _exec_cmd(self, cmd: str) -> tuple[str]:
@@ -80,7 +88,8 @@ class TCPConsoleProtocol(ProtocolBase):
         Raises:
             ValueError: If response format is invalid
         """
-        self.writer.write((cmd + "\r").encode("ascii"))
+        # Device requires CR+LF; CR alone is not accepted over ser2net bridges.
+        self.writer.write((cmd + "\r\n").encode("ascii"))
         await asyncio.wait_for(self.writer.drain(), 2)
         lines = []
         linebytes = bytearray()
@@ -92,7 +101,10 @@ class TCPConsoleProtocol(ProtocolBase):
                 if i not in (13, 10):
                     linebytes.append(i)
                 elif len(linebytes) > 0:
-                    line = linebytes.decode("ascii")
+                    # Tolerate occasional serial line noise: a stray non-ASCII
+                    # byte becomes a replacement char and the malformed line is
+                    # skipped downstream rather than failing the whole read.
+                    line = linebytes.decode("ascii", errors="replace")
                     if line not in self._END_PROMPTS:
                         lines.append(line)
                     linebytes = bytearray()
@@ -118,6 +130,12 @@ class TCPConsoleProtocol(ProtocolBase):
         """Invoke 'unit' console command."""
         return UnitCommand(await self._exec_cmd("unit"))
 
+    async def _pwr_table_lines(self) -> tuple[str, ...]:
+        """Fetch the flat `pwr` response once per connection and cache it."""
+        if self._pwr_lines is None:
+            self._pwr_lines = await self._exec_cmd("pwr")
+        return self._pwr_lines
+
     async def get_device_info(self) -> DeviceInfo:
         """Retrieve device information from info command.
 
@@ -126,6 +144,11 @@ class TCPConsoleProtocol(ProtocolBase):
         """
         info = await self.info()
 
+        pwr_lines = await self._pwr_table_lines()
+        pack_count = (
+            PwrTableCommand(pwr_lines).pack_count if is_flat_pwr(pwr_lines) else 1
+        )
+
         return DeviceInfo(
             manufacturer=info.manufacturer.value if info.manufacturer.value else "Pylontech",
             model=info.device_name.value if info.device_name.value else "Unknown",
@@ -133,6 +156,7 @@ class TCPConsoleProtocol(ProtocolBase):
             firmware_version=info.main_sw_version.value if info.main_sw_version.value else "Unknown",
             connection_type=ConnectionType.TCP_CONSOLE,
             variant=BatteryVariant.PYLONTECH_STANDARD,
+            pack_count=pack_count,
             device_name=info.device_name.value,
             hardware_version=info.hard_version.value,
             device_address=info.device_address.value,
