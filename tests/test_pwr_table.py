@@ -82,3 +82,15 @@ def test_corrupted_or_garbage_rows_are_skipped():
     ]
     table = pylontech.PwrTableCommand(lines)
     assert table.packs == {}
+
+
+def test_present_row_with_corrupt_numeric_is_skipped():
+    # A row that passes the present-row check but has a corrupt numeric token
+    # (e.g. a replacement char from serial-noise decoding) must be skipped
+    # without failing the whole table, so the other packs still parse.
+    good = "1     49961  0      29200  27100  27500  3330   3331   Idle     Normal   Normal   Normal   98%      2026-07-12 10:40:33  Normal   Normal  28500    Normal"
+    bad = "2     4996�  0      29200  27100  27500  3330   3331   Idle     Normal   Normal   Normal   98%      2026-07-12 10:40:33  Normal   Normal  28500    Normal"
+    table = pylontech.PwrTableCommand([good, bad])
+    assert table.pack_count == 1
+    assert table.pack(1).volt == pytest.approx(49.961)
+    assert table.pack(2) is None

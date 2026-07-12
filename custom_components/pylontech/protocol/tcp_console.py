@@ -221,7 +221,6 @@ class TCPConsoleProtocol(ProtocolBase):
             cell_volt_high=pack.cell_volt_high,
             cell_temp_low=pack.cell_temp_low,
             cell_temp_high=pack.cell_temp_high,
-            charge_ah_perc=pack.soc,
             cycle_count=detail.cycle_count,
             status_groups=status_groups,
         )

@@ -298,22 +298,28 @@ class PwrTableCommand:
             tokens = line.split()
             if not _is_present_pwr_row(tokens):
                 continue
-            index = int(tokens[0])
-            self.packs[index] = PwrPack(
-                index=index,
-                volt=int(tokens[1]) / 1000,
-                curr=int(tokens[2]) / 1000,
-                temp=int(tokens[3]) / 1000,
-                cell_temp_low=int(tokens[4]) / 1000,
-                cell_temp_high=int(tokens[5]) / 1000,
-                cell_volt_low=int(tokens[6]) / 1000,
-                cell_volt_high=int(tokens[7]) / 1000,
-                base_state=tokens[8],
-                volt_state=tokens[9],
-                curr_state=tokens[10],
-                temp_state=tokens[11],
-                soc=int(tokens[12].replace("%", "")),
-            )
+            try:
+                index = int(tokens[0])
+                pack = PwrPack(
+                    index=index,
+                    volt=int(tokens[1]) / 1000,
+                    curr=int(tokens[2]) / 1000,
+                    temp=int(tokens[3]) / 1000,
+                    cell_temp_low=int(tokens[4]) / 1000,
+                    cell_temp_high=int(tokens[5]) / 1000,
+                    cell_volt_low=int(tokens[6]) / 1000,
+                    cell_volt_high=int(tokens[7]) / 1000,
+                    base_state=tokens[8],
+                    volt_state=tokens[9],
+                    curr_state=tokens[10],
+                    temp_state=tokens[11],
+                    soc=int(tokens[12].replace("%", "")),
+                )
+            except (ValueError, IndexError):
+                # A present-looking row with a corrupt numeric field (e.g. serial
+                # noise) is skipped rather than failing the whole table parse.
+                continue
+            self.packs[index] = pack
 
     @property
     def pack_count(self) -> int:
@@ -321,7 +327,7 @@ class PwrTableCommand:
         return len(self.packs)
 
     def pack(self, pack_id: int) -> PwrPack | None:
-        """Return the pack with this 1-based index, or None if absent."""
+        """Return the pack with this reported index (column 0), or None if absent."""
         return self.packs.get(pack_id)
 
 
