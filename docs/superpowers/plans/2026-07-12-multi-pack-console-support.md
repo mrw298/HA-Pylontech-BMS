@@ -2057,6 +2057,112 @@ git commit -m "feat: surface real cycle count and protection-event summary from 
 
 ---
 
+### Task 15: Throttle `stat` to a 30-minute cadence
+
+`stat` reports slow-moving lifetime counters, so poll it at most every 30 minutes and cache the values across update cycles, instead of fetching it every 30 s cycle. Reduces steady-state load from 19 back to 13 commands/cycle (spiking to 19 once per 30 min).
+
+**Files:**
+- Modify: `custom_components/pylontech/const.py` (add interval constant)
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`__init__`, import, new throttled helper, `_battery_data_flat`)
+
+**Interfaces:**
+- Consumes: `StatCommand` (Task 13), `STAT_SCAN_INTERVAL_SECONDS`.
+- Produces: `TCPConsoleProtocol._stat_for_pack(pack_id) -> tuple[int | None, int | None]` (throttled `(cycle_count, protection_events)`).
+
+- [ ] **Step 1: Add the interval constant**
+
+In `custom_components/pylontech/const.py`, after `SCAN_INTERVAL = timedelta(seconds=30)`, add:
+
+```python
+# `stat` reports slow-moving lifetime counters (cycle count, fault totals),
+# so it is polled at most this often rather than every SCAN_INTERVAL cycle.
+STAT_SCAN_INTERVAL_SECONDS = 1800  # 30 minutes
+```
+
+- [ ] **Step 2: Import `time` and the constant in tcp_console**
+
+In `custom_components/pylontech/protocol/tcp_console.py`:
+- Add `import time` with the other stdlib imports near the top (after `import logging`).
+- Add `STAT_SCAN_INTERVAL_SECONDS` to the existing `from ..const import (...)` statement (it currently imports `BatteryVariant, ConnectionType`).
+
+- [ ] **Step 3: Add the stat cache fields to `__init__`**
+
+In `TCPConsoleProtocol.__init__`, after the `self._pwr_lines` line, add:
+
+```python
+        # `stat` is polled on a slower cadence than the 30 s cycle; these
+        # persist ACROSS connections (unlike the pwr cache) and are not
+        # cleared on connect/disconnect.
+        self._stat_cache: dict[int, tuple[int | None, int | None]] = {}
+        self._stat_deadline: float | None = None
+```
+
+(Do NOT clear these in `connect`/`disconnect` — they must survive across cycles.)
+
+- [ ] **Step 4: Add the throttled helper**
+
+Add this method to `TCPConsoleProtocol` (e.g. after `_pwr_table_lines`):
+
+```python
+    async def _stat_for_pack(self, pack_id: int) -> tuple[int | None, int | None]:
+        """Return (cycle_count, protection_events) for a pack from `stat`.
+
+        `stat` carries slow-moving lifetime counters, so it is fetched at most
+        once per STAT_SCAN_INTERVAL_SECONDS and cached across update cycles.
+        A failed fetch is not cached, so it retries on the next cycle.
+        """
+        now = time.monotonic()
+        if self._stat_deadline is None or now >= self._stat_deadline:
+            self._stat_cache = {}
+            self._stat_deadline = now + STAT_SCAN_INTERVAL_SECONDS
+        if pack_id not in self._stat_cache:
+            try:
+                stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+            except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+                return (None, None)
+            self._stat_cache[pack_id] = (stat.cycle_count, stat.protection_events)
+        return self._stat_cache[pack_id]
+```
+
+- [ ] **Step 5: Use the helper in `_battery_data_flat`**
+
+In `_battery_data_flat`, replace the inline stat fetch block (added in Task 14):
+
+```python
+        try:
+            stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+            stat = None
+        cycle_count = stat.cycle_count if stat is not None else None
+        protection_events = stat.protection_events if stat is not None else None
+```
+
+with:
+
+```python
+        cycle_count, protection_events = await self._stat_for_pack(pack_id)
+```
+
+- [ ] **Step 6: Verify**
+
+Run: `python -m py_compile custom_components/pylontech/const.py custom_components/pylontech/protocol/tcp_console.py` (exit 0). Then `python -m pytest tests/ -v` (expect 28 passing — parsers unaffected).
+
+- [ ] **Step 7: Review checklist (manual)**
+
+- Constant added; `time` and constant imported.
+- `_stat_cache`/`_stat_deadline` initialised in `__init__` and NOT cleared in `connect`/`disconnect`.
+- Deadline resets and clears the cache when expired; all present packs are fetched in the expiry round, then served from cache for ~30 min; failed fetches are not cached (retry next cycle).
+- `_battery_data_flat` now calls `_stat_for_pack`; `StatCommand` still imported/used.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add custom_components/pylontech/const.py custom_components/pylontech/protocol/tcp_console.py
+git commit -m "perf: poll stat at most every 30 minutes, cache across cycles"
+```
+
+---
+
 ## Manual validation (maintainer, on hardware)
 
 Not automated. After the tasks above, run the branch against the live stack:
