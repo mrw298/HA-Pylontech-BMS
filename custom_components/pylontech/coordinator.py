@@ -270,10 +270,15 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
 
 def _pack_serial(info: DeviceInfo, pack_id: int) -> str:
-    """Return the pack serial: its real barcode, or a stable fallback."""
-    if info.barcode and info.barcode != "Unknown":
-        return info.barcode
-    return f"Unknown_pack{pack_id}"
+    """Return a stable, per-pack-unique identifier key.
+
+    Always includes the pack index so distinct packs never collide, even when
+    they report the same barcode (e.g. a binary-protocol stack that falls back
+    to the shared top-level info, or a console pack whose per-pack info fetch
+    failed). Incorporates the real barcode when known.
+    """
+    base = info.barcode if info.barcode and info.barcode != "Unknown" else "Unknown"
+    return f"{base}_pack{pack_id}"
 
 
 def _pack_device(info: DeviceInfo, pack_id: int, device_name: str = "Battery") -> HADeviceInfo:
@@ -287,13 +292,16 @@ def _pack_device(info: DeviceInfo, pack_id: int, device_name: str = "Battery") -
     Returns:
         Home Assistant DeviceInfo for the pack.
     """
-    pack_serial = _pack_serial(info, pack_id)
+    pack_key = _pack_serial(info, pack_id)
+    display_serial = (
+        info.barcode if info.barcode and info.barcode != "Unknown" else pack_key
+    )
     return HADeviceInfo(
-        identifiers={(DOMAIN, pack_serial)},
+        identifiers={(DOMAIN, pack_key)},
         name=f"{info.manufacturer} {device_name} Pack {pack_id}",
         model=info.model,
         manufacturer=info.manufacturer,
         sw_version=info.firmware_version,
         hw_version=info.hardware_version,
-        serial_number=pack_serial,
+        serial_number=display_serial,
     )

@@ -33,3 +33,17 @@ def test_info_not_derailed_by_unexpected_board_line():
     assert info.barcode.value is not None
     assert info.main_sw_version.value is not None
     assert info.hard_version.value is None  # no 'Hard version' line present
+
+
+def test_info_module_barcode_line_not_treated_as_bmu():
+    # 'Module Barcode'/'PCBA Barcode' are fields, not BMU enumeration lines,
+    # and must not be scooped into bmu_modules/bmu_pcbas.
+    lines = [
+        "Manufacturer        : Pylon",
+        "Module Barcode      : ABC123",
+        "PCBA Barcode        : DEF456",
+    ]
+    info = pylontech.InfoCommand(lines)
+    assert info.bmu_modules == []
+    assert info.bmu_pcbas == []
+    assert info.module_barcode.value == "ABC123"

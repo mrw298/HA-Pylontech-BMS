@@ -746,8 +746,12 @@ class TCPBinaryProtocol(ProtocolBase):
             "alarm_status": get_active_flags(alarm_flags),
         }
 
-    async def get_device_info(self) -> DeviceInfo:
+    async def get_device_info(self, pack_id: int | None = None) -> DeviceInfo:
         """Retrieve device information.
+
+        Args:
+            pack_id: Ignored. Per-pack info is not supported over the binary
+                protocol; the same device info is returned regardless of pack_id.
 
         Returns:
             DeviceInfo with manufacturer, model, version, barcode, etc.

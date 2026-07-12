@@ -542,10 +542,13 @@ class InfoCommand:
         self.bmu_modules: list[str] = []
         self.bmu_pcbas: list[str] = []
         for line in lines:
-            if line.startswith("Module"):
-                self.bmu_modules.insert(0, line.split()[2])
-            if line.startswith("PCBA"):
-                self.bmu_pcbas.insert(0, line.split()[2])
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            if line.startswith("Module") and "Barcode" not in line:
+                self.bmu_modules.insert(0, parts[2])
+            if line.startswith("PCBA") and "Barcode" not in line:
+                self.bmu_pcbas.insert(0, parts[2])
 
     def __str__(self) -> str:
         """Return string representation of info command."""
