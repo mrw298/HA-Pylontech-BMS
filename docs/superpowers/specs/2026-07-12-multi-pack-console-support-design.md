@@ -211,6 +211,28 @@ entity `unique_id` scheme is bumped (`-v3`) so Home Assistant recreates
 entities with correct identities. The config-entry identity is left unchanged
 so the integration instance is not re-onboarded.
 
+### Statistics (`stat <index>`)
+
+The `pwr <index>` detail view's `Charge Times` is not a real cycle counter (it
+reads ~40000 and is 0 on all packs but one), so it is not surfaced. The
+`stat <index>` command provides the real per-pack lifetime statistics:
+
+- **`CYCLE Times`** is the genuine battery cycle count (e.g. 725 / 693 / 919),
+  surfaced as the `cycle_count` sensor.
+- A **summed protection/fault-event count** (over-current, over/under voltage,
+  over/under temperature, short circuit, etc.) is surfaced as a single
+  `protection_events` diagnostic sensor. It is ~0 on healthy packs and large on
+  a failing one (a mixed-stack US2000C in testing showed ~9861), making it a
+  useful at-a-glance health flag.
+
+`stat`'s numeric `SOH` field is not surfaced: it reads 0 on healthy packs, so
+it is unreliable; the categorical `Soh. Status` from the `pwr` detail view is
+kept instead. A new `StatCommand` parser reads `stat` order-independently
+(tolerating line noise such as a corrupted `LifeWa}&(` label and the
+colon-less `Device address` line). `stat <index>` is fetched per pack per
+cycle, taking the per-cycle command count to 1 flat + 6 detail + 6 per-cell +
+6 stat = 19.
+
 ### Protocol layer (`protocol/tcp_console.py`)
 
 - `_exec_cmd`: send `cmd + "\r\n"` (defect 1).

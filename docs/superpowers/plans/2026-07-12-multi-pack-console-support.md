@@ -1728,6 +1728,335 @@ git commit -m "feat: per-pack device identity from info <index> (model/serial/fi
 
 ---
 
+### Task 13: `stat` parser (cycle count + protection-event summary)
+
+Add a parser for the `stat <index>` statistics table exposing the real cycle count and a summed protection/fault-event count.
+
+**Files:**
+- Modify: `custom_components/pylontech/pylontech.py` (add after `BatPackCommand`)
+- Create: `tests/fixtures/stat_pack1.txt`
+- Create: `tests/fixtures/stat_pack3.txt`
+- Test: `tests/test_stat.py`
+
+**Interfaces:**
+- Produces: module constant `_STAT_PROTECTION_KEYS` (tuple of str); `class StatCommand` with `__init__(self, lines)`, attributes `cycle_count: int | None` (from `CYCLE Times`) and `protection_events: int | None` (sum of the protection counters present).
+
+- [ ] **Step 1: Create the `stat 1` fixture (clean, with line noise)**
+
+Create `tests/fixtures/stat_pack1.txt` (verbatim capture; note the colon-less `Device address` line and the corrupted `LifeWa}&(` label):
+
+```
+Device address           1
+Data Items      :       47
+HisData Items   :     1793
+Charge Cnt.     :        0
+Discharge Cnt.  :        0
+Charge Times    :    40477
+Status Cnt.     :     5214
+Idle Times      :    35807
+COC Times       :        0
+COC2 Times      :        0
+DOC Times       :        0
+DOC2 Times      :        0
+COCA Times      :        0
+DOCA Times      :        0
+SC Times        :        0
+Bat OV Times    :        0
+Bat HV Times    :        0
+Bat LV Times    :        0
+Bat UV Times    :        0
+Bat SLP Times   :        0
+Pwr OV Times    :        0
+Pwr HV Times    :        0
+Pwr LV Times    :        0
+Pwr UV Times    :        0
+Pwr SLP Times   :        0
+COT Times       :        0
+CUT Times       :        0
+DOT Times       :        0
+DUT Times       :        0
+CHT Times       :        0
+CLT Times       :        0
+DHT Times       :        0
+DLT Times       :        0
+Shut Times      :        0
+Reset Times     :       18
+RV Times        :        0
+Input OV Times  :        0
+SOH Times       :        0
+BMICERR Times   :        0
+CYCLE Times     :      725
+SOH             :       93
+Pwr Percent     :      100
+Pwr Coulomb     : 333770760
+Dsg Cap         : 72500577
+HT@0.5C Cnt     :        0
+LT@0.5C Cnt     :        0
+HT Cnt          :        0
+LT Cnt          :        0
+LV Cnt          :        0
+LifeWa}&(  :        0
+LifeAlarm Times :        0
+```
+
+- [ ] **Step 2: Create the `stat 3` fixture (heavy protection events)**
+
+Create `tests/fixtures/stat_pack3.txt`:
+
+```
+Device address           3
+Data Items      :     1692
+HisData Items   :     1793
+Charge Cnt.     :        0
+Discharge Cnt.  :        0
+Charge Times    :    47263
+Status Cnt.     :     5197
+Idle Times      :     7220
+COC Times       :        0
+COC2 Times      :        0
+DOC Times       :        0
+DOC2 Times      :        0
+COCA Times      :     1907
+DOCA Times      :        0
+SC Times        :        0
+Bat OV Times    :     6988
+Bat HV Times    :      716
+Bat LV Times    :      162
+Bat UV Times    :        6
+Bat SLP Times   :        0
+Pwr OV Times    :        0
+Pwr HV Times    :        0
+Pwr LV Times    :       82
+Pwr UV Times    :        0
+Pwr SLP Times   :        0
+COT Times       :        0
+CUT Times       :        0
+DOT Times       :        0
+DUT Times       :        0
+CHT Times       :        0
+CLT Times       :        0
+DHT Times       :        0
+DLT Times       :        0
+Shut Times      :       81
+Reset Times     :      102
+RV Times        :        0
+Input OV Times  :        0
+SOH Times       :     1442
+BMICERR Times   :        0
+CYCLE Times     :      919
+SOH             :        0
+Pwr Percent     :       98
+Pwr Coulomb     : 160142520
+Dsg Cap         : 45985551
+HT@0.5C Cnt     :        0
+LT@0.5C Cnt     :        0
+HT Cnt          :        0
+LT Cnt          :        0
+LV Cnt          :  1578321
+LifeWarn Times  :        0
+LifeAlarm Times :        0
+```
+
+- [ ] **Step 3: Write the failing tests**
+
+Create `tests/test_stat.py`:
+
+```python
+import pylontech
+from conftest import read_fixture
+
+
+def test_stat_pack1_cycle_count_and_no_faults():
+    stat = pylontech.StatCommand(read_fixture("stat_pack1.txt"))
+    assert stat.cycle_count == 725
+    assert stat.protection_events == 0
+
+
+def test_stat_pack3_cycle_count_and_fault_sum():
+    stat = pylontech.StatCommand(read_fixture("stat_pack3.txt"))
+    assert stat.cycle_count == 919
+    # COCA 1907 + Bat OV 6988 + Bat HV 716 + Bat LV 162 + Bat UV 6 + Pwr LV 82
+    assert stat.protection_events == 9861
+
+
+def test_stat_tolerates_line_noise_and_colonless_line():
+    # The corrupted 'LifeWa}&(' label and the colon-less 'Device address'
+    # line must not break parsing of CYCLE Times / protection counts.
+    stat = pylontech.StatCommand(read_fixture("stat_pack1.txt"))
+    assert stat.cycle_count == 725
+
+
+def test_stat_missing_fields_are_none():
+    stat = pylontech.StatCommand(["Device address           1"])
+    assert stat.cycle_count is None
+    assert stat.protection_events is None
+```
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+Run: `python -m pytest tests/test_stat.py -v`
+Expected: FAIL with `AttributeError: module 'pylontech' has no attribute 'StatCommand'`.
+
+- [ ] **Step 5: Implement the parser**
+
+In `custom_components/pylontech/pylontech.py`, add after the `BatPackCommand` class:
+
+```python
+# Protection/fault event counters summed into one diagnostic total. Excludes
+# informational counters (charge/idle/status counts, cycle count, SOH, etc.).
+_STAT_PROTECTION_KEYS = (
+    "COC Times", "COC2 Times", "DOC Times", "DOC2 Times",
+    "COCA Times", "DOCA Times", "SC Times",
+    "Bat OV Times", "Bat HV Times", "Bat LV Times", "Bat UV Times",
+    "Pwr OV Times", "Pwr HV Times", "Pwr LV Times", "Pwr UV Times",
+    "COT Times", "CUT Times", "DOT Times", "DUT Times",
+    "CHT Times", "CLT Times", "DHT Times", "DLT Times",
+    "Input OV Times",
+)
+
+
+class StatCommand:
+    """Parses the `stat <index>` per-pack statistics table.
+
+    Order-independent key/value parse, tolerating line noise (e.g. a corrupted
+    `LifeWa}&(` label) and the colon-less `Device address` line. Exposes the
+    real cycle count (`CYCLE Times`) and a summed protection/fault-event count.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by parsing the key/value statistics lines."""
+        fields: dict[str, str] = {}
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            fields[" ".join(key.split())] = value.strip()
+
+        def as_int(label: str) -> int | None:
+            raw = fields.get(label)
+            if raw is None:
+                return None
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+
+        self.cycle_count: int | None = as_int("CYCLE Times")
+
+        total = 0
+        seen = False
+        for key in _STAT_PROTECTION_KEYS:
+            value = as_int(key)
+            if value is not None:
+                total += value
+                seen = True
+        self.protection_events: int | None = total if seen else None
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `python -m pytest tests/test_stat.py -v`
+Expected: PASS (4 passed). Then run the full suite `python -m pytest tests/ -v` (expect 28 passing).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add custom_components/pylontech/pylontech.py tests/test_stat.py tests/fixtures/stat_pack1.txt tests/fixtures/stat_pack3.txt
+git commit -m "feat: parse stat (real cycle count and protection-event summary)"
+```
+
+---
+
+### Task 14: Wire cycle count and protection events into sensors
+
+Fetch `stat <pack_id>` on the flat path and surface the real cycle count and a protection-events count.
+
+**Files:**
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`_battery_data_flat` + import)
+- Modify: `custom_components/pylontech/models.py` (add `protection_events` field)
+- Modify: `custom_components/pylontech/coordinator.py` (`_flatten_battery_data`)
+- Modify: `custom_components/pylontech/sensor.py` (`SENSOR_MAPPINGS`)
+
+**Interfaces:**
+- Consumes: `StatCommand` (Task 13); existing `BatteryData.cycle_count`; new `BatteryData.protection_events`.
+- Produces: `cycle_count` and `protection_events` entries in the coordinator's flattened per-pack data.
+
+- [ ] **Step 1: Add the protection_events field to BatteryData**
+
+In `custom_components/pylontech/models.py`, in the `BatteryData` dataclass, add after the `cells_balancing` field:
+
+```python
+    # Summed protection/fault events (console stat command)
+    protection_events: int | None = None
+```
+
+- [ ] **Step 2: Import StatCommand in tcp_console**
+
+In `custom_components/pylontech/protocol/tcp_console.py`, add `StatCommand` to the existing `from pylontech import (...)` block.
+
+- [ ] **Step 3: Fetch and merge stat data in the flat path**
+
+In `_battery_data_flat`, after the `bat`/`cells_balancing` block and before the `BatteryData(...)` return, add:
+
+```python
+        try:
+            stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+            stat = None
+        cycle_count = stat.cycle_count if stat is not None else None
+        protection_events = stat.protection_events if stat is not None else None
+```
+
+Then in the `BatteryData(...)` call on the flat path, add `cycle_count=cycle_count,` and `protection_events=protection_events,` (e.g. after `cells_balancing=cells_balancing,`).
+
+Note: the console flat path previously did not set `cycle_count` (it was removed when the unreliable `pwr` `Charge Times` source was dropped). It is now set from `stat`.
+
+- [ ] **Step 4: Flatten protection_events in the coordinator**
+
+In `custom_components/pylontech/coordinator.py`, in `_flatten_battery_data`, after the `cycle_count` block:
+
+```python
+        # Cycle count (binary protocol)
+        if data.cycle_count is not None:
+            result["cycle_count"] = data.cycle_count
+```
+
+add:
+
+```python
+        # Protection/fault event summary (console stat command)
+        if data.protection_events is not None:
+            result["protection_events"] = data.protection_events
+```
+
+- [ ] **Step 5: Add the sensor mapping**
+
+In `custom_components/pylontech/sensor.py`, in `SENSOR_MAPPINGS`, add near the `cycle_count` entry:
+
+```python
+    "protection_events": ("Protection Events", None, "events", SensorStateClass.TOTAL_INCREASING),
+```
+
+- [ ] **Step 6: Verify**
+
+Run each `python -m py_compile ...` on the four changed modules (`tcp_console.py`, `models.py`, `coordinator.py`, `sensor.py`) — all exit 0. Then `python -m pytest tests/ -v` (expect 28 passing — parsers unaffected).
+
+- [ ] **Step 7: Review checklist (manual)**
+
+- `stat <pack_id>` fetch wrapped in try/except (degrades to None on unsupported).
+- `cycle_count` set from `stat` on the flat path (re-added); `protection_events` added.
+- `protection_events` is a valid new `BatteryData` field; flattened only when not None.
+- `stat` fetch adds exactly one command per pack (now 19/cycle for 6 packs).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add custom_components/pylontech/protocol/tcp_console.py custom_components/pylontech/models.py custom_components/pylontech/coordinator.py custom_components/pylontech/sensor.py
+git commit -m "feat: surface real cycle count and protection-event summary from stat"
+```
+
+---
+
 ## Manual validation (maintainer, on hardware)
 
 Not automated. After the tasks above, run the branch against the live stack:
