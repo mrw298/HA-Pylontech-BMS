@@ -325,6 +325,45 @@ class PwrTableCommand:
         return self.packs.get(pack_id)
 
 
+class PwrDetailCommand:
+    """Parses `pwr <index>` per-pack detail (Key : value unit lines).
+
+    Complementary to the flat table: supplies total capacity, max voltage,
+    cycle count and health statuses, which the flat table does not carry.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by scanning the detail lines for known keys."""
+        self.total_capacity: float | None = None  # Ah
+        self.cycle_count: int | None = None
+        self.max_voltage: float | None = None  # V
+        self.soh_status: str | None = None
+        self.heater_status: str | None = None
+        self.system_fault: str | None = None
+
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, rest = line.partition(":")
+            key = key.strip()
+            tokens = rest.split()
+            value = tokens[0] if tokens else ""
+            if not value:
+                continue
+            if key == "Total Coulomb":
+                self.total_capacity = int(value) / 1000
+            elif key == "Charge Times":
+                self.cycle_count = int(value)
+            elif key == "Max Voltage":
+                self.max_voltage = int(value) / 1000
+            elif key == "Soh. Status":
+                self.soh_status = value
+            elif key == "Heater Status":
+                self.heater_status = value
+            elif key == "System Fault":
+                self.system_fault = value
+
+
 class BatCommand:
     """Pylontech BMS console command 'bat'."""
 
