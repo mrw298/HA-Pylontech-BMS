@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detail view.
 - Per-cell voltages and a per-pack cells-balancing count from the
   `bat <index>` command.
+- Per-pack cell voltage delta sensor (highest minus lowest cell voltage, in
+  mV) for spotting cell imbalance.
 - Real per-pack cycle count (from `stat <index>` `CYCLE Times`) and a summed
   protection/fault-event diagnostic sensor (~0 on healthy packs, large on a
   failing one). `stat` is polled at most every 30 minutes and cached between
