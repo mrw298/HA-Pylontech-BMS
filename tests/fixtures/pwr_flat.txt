@@ -1,0 +1,17 @@
+Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St   MosTempr M.T.St
+1     49961  0      29200  27100  27500  3330   3331   Idle     Normal   Normal   Normal   98%      2026-07-12 10:40:33  Normal   Normal  28500    Normal
+2     49964  0      28600  26900  27600  3330   3333   Idle     Normal   Normal   Normal   98%      2026-07-12 10:40:32  Normal   Normal  28100    Normal
+3     49964  0      29000  27000  27100  3324   3333   Idle     Normal   Normal   Normal   95%      2026-07-12 10:40:33  Normal   Normal  28100    Normal
+4     49962  0      28800  26700  26800  3329   3332   Idle     Normal   Normal   Normal   100%     2026-07-12 10:40:33  Normal   Normal  28100    Normal
+5     49966  0      28800  26400  26700  3329   3335   Idle     Normal   Normal   Normal   100%     2026-07-12 10:40:32  Normal   Normal  27800    Normal
+6     49965  0      28400  25900  26000  3328   3335   Idle     Normal   Normal   Normal   100%     2026-07-12 10:40:33  Normal   Normal  27400    Normal
+7     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+8     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+9     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+10    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+11    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+12    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+13    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+14    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+15    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+16    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
