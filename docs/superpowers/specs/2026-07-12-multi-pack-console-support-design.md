@@ -235,10 +235,10 @@ Home Assistant). Fixtures are the verbatim captures above.
   would grab).
 - `info` parses barcode and firmware version.
 
-A charging/discharging fixture (a `pwr` capture with non-zero `Curr` and a
-`Base.St` of `Charge`/`Discharge`) will be added as a further test case when
-the maintainer can capture it, to verify a non-idle row and the current sign
-convention. It is not required to land the core fix.
+A mixed charge/idle/discharge fixture is included (captured 2026-07-12 while
+the stack was cycling). It confirms the current sign convention and the
+`Dischg` state, and exercises positive, zero, and negative currents in one
+table.
 
 Manual validation: the maintainer will run the branch against the live stack
 and confirm entities populate. Live Home Assistant testing is not automated
@@ -250,12 +250,27 @@ here.
   target stack. Non-contiguous slots would need the coordinator to iterate the
   set of actually-present indices rather than a range.
 - The legacy header-format path is preserved but unverified.
-- The current sign convention (whether charge is positive or negative in the
-  `Curr` column) is unverified, because all captured data is idle at 0 A. The
-  parser will read the value as a signed integer and compute power as
-  `V * A`; the sign's meaning will be confirmed against a charging capture.
 - 7 commands per cycle is heavier than a single-command design; acceptable at a
   30 s interval.
+
+## Current sign convention (confirmed)
+
+Captured while cycling on 2026-07-12: the `Curr` column is positive when
+charging (`Base.St` `Charge`) and negative when discharging (`Base.St`
+`Dischg`); idle is `0`. `power = V * A` is therefore positive on charge and
+negative on discharge, which is the desired behaviour with no sign adjustment.
+Base states seen: `Idle`, `Charge`, `Dischg`.
+
+## Serial line-noise robustness
+
+A real capture showed a corrupted row: a spurious line break plus non-ASCII
+bytes (`ʘu`). `_exec_cmd` decodes each line as ASCII, so a non-ASCII byte would
+raise `UnicodeDecodeError` and fail the whole update cycle. The fix is to
+decode with `errors="replace"`, so a noisy byte becomes a replacement
+character and the malformed line is simply skipped by the parser (it never
+matches a present-pack row). The `pwr <index>` detail view may also gain an
+extra `Charge Sec.` line while charging; the key/value detail parser ignores
+unknown keys, so this is handled without change.
 
 ## Open dependency
 

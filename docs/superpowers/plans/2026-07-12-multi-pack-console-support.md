@@ -26,6 +26,7 @@ Establish a `pytest` harness that can import `pylontech.py` standalone (without 
 - Create: `tests/__init__.py` (empty)
 - Create: `tests/conftest.py`
 - Create: `tests/fixtures/pwr_flat.txt`
+- Create: `tests/fixtures/pwr_flat_mixed.txt`
 - Create: `tests/fixtures/pwr_detail_pack1.txt`
 - Create: `tests/test_import.py`
 
@@ -80,6 +81,31 @@ Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  Volt.St  Curr.St
 4     49962  0      28800  26700  26800  3329   3332   Idle     Normal   Normal   Normal   100%     2026-07-12 10:40:33  Normal   Normal  28100    Normal
 5     49966  0      28800  26400  26700  3329   3335   Idle     Normal   Normal   Normal   100%     2026-07-12 10:40:32  Normal   Normal  27800    Normal
 6     49965  0      28400  25900  26000  3328   3335   Idle     Normal   Normal   Normal   100%     2026-07-12 10:40:33  Normal   Normal  27400    Normal
+7     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+8     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+9     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+10    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+11    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+12    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+13    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+14    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+15    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+16    -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
+```
+
+- [ ] **Step 3b: Create the mixed charge/idle/discharge fixture**
+
+Create `tests/fixtures/pwr_flat_mixed.txt` (verbatim capture while cycling;
+packs 1-3 charging, 4 idle, 5-6 discharging):
+
+```
+Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St   MosTempr M.T.St
+1     50538  257    29300  27100  27700  3368   3370   Charge   Normal   Normal   Normal   98%      2026-07-12 11:03:39  Normal   Normal  28700    Normal
+2     50537  301    28700  27000  27600  3368   3374   Charge   Normal   Normal   Normal   98%      2026-07-12 11:03:38  Normal   Normal  28200    Normal
+3     50530  1673   29200  27100  27100  3360   3439   Charge   Normal   Normal   Normal   96%      2026-07-12 11:03:39  Normal   Normal  28300    Normal
+4     50537  0      28900  26700  26900  3367   3371   Idle     Normal   Normal   Normal   100%     2026-07-12 11:03:39  Normal   Normal  28300    Normal
+5     50545  -642   28900  26500  26800  3367   3373   Dischg   Normal   Normal   Normal   100%     2026-07-12 11:03:38  Normal   Normal  27900    Normal
+6     50545  -516   28500  25900  26000  3367   3373   Dischg   Normal   Normal   Normal   100%     2026-07-12 11:03:39  Normal   Normal  27500    Normal
 7     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
 8     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
 9     -      -      -      -      -      -      -      Absent   -        -        -        -        -                    -        -
@@ -222,6 +248,33 @@ def test_pack_three_indexing():
     assert pack.cell_volt_low == pytest.approx(3.324)
     assert pack.cell_volt_high == pytest.approx(3.333)
     assert pack.base_state == "Idle"
+
+
+def test_current_sign_charge_idle_discharge():
+    table = pylontech.PwrTableCommand(read_fixture("pwr_flat_mixed.txt"))
+    assert table.pack_count == 6
+    # Charging pack: positive current.
+    assert table.pack(1).curr == pytest.approx(0.257)
+    assert table.pack(1).base_state == "Charge"
+    # Idle pack: zero.
+    assert table.pack(4).curr == pytest.approx(0.0)
+    assert table.pack(4).base_state == "Idle"
+    # Discharging packs: negative current, "Dischg" state.
+    assert table.pack(5).curr == pytest.approx(-0.642)
+    assert table.pack(5).base_state == "Dischg"
+    assert table.pack(6).curr == pytest.approx(-0.516)
+
+
+def test_corrupted_or_garbage_rows_are_skipped():
+    # Real serial noise: a truncated absent fragment and a non-ASCII first
+    # token. Neither is a valid present-pack row, so both are ignored.
+    lines = [
+        "Power Volt Curr Tempr Tlow Thigh Vlow Vhigh Base.St Volt.St Curr.St Temp.St Coulomb",
+        "9     -      -      -      -      -      -",
+        "��u     Absent   -   -   -   -   -   -   -   -   -   -",
+    ]
+    table = pylontech.PwrTableCommand(lines)
+    assert table.packs == {}
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -316,7 +369,7 @@ class PwrTableCommand:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_pwr_table.py -v`
-Expected: PASS (6 passed).
+Expected: PASS (8 passed).
 
 - [ ] **Step 5: Commit**
 
@@ -498,6 +551,25 @@ to:
 ```python
         # Device requires CR+LF; CR alone is not accepted over ser2net bridges.
         self.writer.write((cmd + "\r\n").encode("ascii"))
+```
+
+- [ ] **Step 4b: Harden line decoding against serial noise**
+
+Real captures show occasional non-ASCII line noise, which would make a strict
+ASCII decode raise `UnicodeDecodeError` and fail the whole update. In
+`_exec_cmd` (around line 95) change:
+
+```python
+                    line = linebytes.decode("ascii")
+```
+
+to:
+
+```python
+                    # Tolerate occasional serial line noise: a stray non-ASCII
+                    # byte becomes a replacement char and the malformed line is
+                    # skipped downstream rather than failing the whole read.
+                    line = linebytes.decode("ascii", errors="replace")
 ```
 
 - [ ] **Step 5: Add the cached pwr-table helper**
@@ -825,6 +897,7 @@ In `CHANGELOG.md`, insert immediately after the header block (after line 6, befo
   - Parse the flat multi-pack `pwr` table by pack index, skipping absent slots.
   - Stop calling the `unit` command unconditionally; it is not supported on
     all firmware and now degrades gracefully.
+  - Tolerate non-ASCII serial line noise instead of failing the update cycle.
 
 ### Added
 - Per-pack total capacity, cycle count and health statuses from the
