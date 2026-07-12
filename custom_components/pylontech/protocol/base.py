@@ -28,8 +28,12 @@ class ProtocolBase(ABC):
         """
 
     @abstractmethod
-    async def get_device_info(self) -> DeviceInfo:
+    async def get_device_info(self, pack_id: int | None = None) -> DeviceInfo:
         """Retrieve device information.
+
+        Args:
+            pack_id: Optional pack ID (1-based) to fetch per-pack info for.
+                Protocols that do not support per-pack info may ignore it.
 
         Returns:
             DeviceInfo: Device metadata including manufacturer, model, version, etc.

@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 from asyncio import StreamReader, StreamWriter
 import logging
+import time
 from typing import Any
 
 from .base import ProtocolBase
-from ..const import BatteryVariant, ConnectionType
+from ..const import BatteryVariant, ConnectionType, STAT_SCAN_INTERVAL_SECONDS
 from ..models import BatteryData, BMUData, DeviceInfo
 
 # Import all sensor and command classes from parent pylontech module
@@ -22,10 +23,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from pylontech import (
     BatCommand,
+    BatPackCommand,
     InfoCommand,
     PwrCommand,
     PwrDetailCommand,
     PwrTableCommand,
+    StatCommand,
     UnitCommand,
     Sensor,
     is_flat_pwr,
@@ -57,6 +60,11 @@ class TCPConsoleProtocol(ProtocolBase):
         # Cached flat `pwr` response for the current connection (cleared on
         # connect/disconnect) so pack_count and every per-pack fetch reuse it.
         self._pwr_lines: tuple[str, ...] | None = None
+        # `stat` is polled on a slower cadence than the 30 s cycle; these
+        # persist ACROSS connections (unlike the pwr cache) and are not
+        # cleared on connect/disconnect.
+        self._stat_cache: dict[int, tuple[int | None, int | None]] = {}
+        self._stat_deadline: float | None = None
 
     async def connect(self) -> None:
         """Establish TCP connection to BMS console."""
@@ -118,9 +126,10 @@ class TCPConsoleProtocol(ProtocolBase):
         """Invoke 'bat' console command."""
         return BatCommand(await self._exec_cmd("bat"))
 
-    async def info(self) -> InfoCommand:
-        """Invoke 'info' console command."""
-        return InfoCommand(await self._exec_cmd("info"))
+    async def info(self, pack_id: int | None = None) -> InfoCommand:
+        """Invoke the 'info' console command, optionally for one pack."""
+        cmd = "info" if pack_id is None else f"info {pack_id}"
+        return InfoCommand(await self._exec_cmd(cmd))
 
     async def pwr(self) -> PwrCommand:
         """Invoke 'pwr' console command."""
@@ -136,24 +145,50 @@ class TCPConsoleProtocol(ProtocolBase):
             self._pwr_lines = await self._exec_cmd("pwr")
         return self._pwr_lines
 
-    async def get_device_info(self) -> DeviceInfo:
-        """Retrieve device information from info command.
+    async def _stat_for_pack(self, pack_id: int) -> tuple[int | None, int | None]:
+        """Return (cycle_count, protection_events) for a pack from `stat`.
 
-        Returns:
-            DeviceInfo with manufacturer, model, version, barcode, etc.
+        `stat` carries slow-moving lifetime counters, so it is fetched at most
+        once per STAT_SCAN_INTERVAL_SECONDS and cached across update cycles.
+        A failed fetch is not cached, so it retries on the next cycle.
         """
-        info = await self.info()
+        now = time.monotonic()
+        if self._stat_deadline is None or now >= self._stat_deadline:
+            self._stat_cache = {}
+            self._stat_deadline = now + STAT_SCAN_INTERVAL_SECONDS
+        if pack_id not in self._stat_cache:
+            try:
+                stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+            except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+                return (None, None)
+            self._stat_cache[pack_id] = (stat.cycle_count, stat.protection_events)
+        return self._stat_cache[pack_id]
 
-        pwr_lines = await self._pwr_table_lines()
-        pack_count = (
-            PwrTableCommand(pwr_lines).pack_count if is_flat_pwr(pwr_lines) else 1
-        )
+    async def get_device_info(self, pack_id: int | None = None) -> DeviceInfo:
+        """Retrieve device information.
+
+        With no `pack_id`, returns the top-level info and computes `pack_count`
+        from the flat `pwr` table. With a `pack_id`, returns that pack's own
+        metadata (`info <pack_id>`) and leaves `pack_count` unset.
+        """
+        info = await self.info(pack_id)
+
+        if pack_id is None:
+            pwr_lines = await self._pwr_table_lines()
+            pack_count = (
+                PwrTableCommand(pwr_lines).pack_count if is_flat_pwr(pwr_lines) else 1
+            )
+        else:
+            pack_count = None
+
+        barcode = info.barcode.value or info.module_barcode.value or "Unknown"
+        firmware = info.main_sw_version.value or info.sw_version.value or "Unknown"
 
         return DeviceInfo(
             manufacturer=info.manufacturer.value if info.manufacturer.value else "Pylontech",
             model=info.device_name.value if info.device_name.value else "Unknown",
-            barcode=info.module_barcode.value if info.module_barcode.value else "Unknown",
-            firmware_version=info.main_sw_version.value if info.main_sw_version.value else "Unknown",
+            barcode=barcode,
+            firmware_version=firmware,
             connection_type=ConnectionType.TCP_CONSOLE,
             variant=BatteryVariant.PYLONTECH_STANDARD,
             pack_count=pack_count,
@@ -188,6 +223,16 @@ class TCPConsoleProtocol(ProtocolBase):
             raise ValueError(f"Pack {pack_id} not present in pwr output")
 
         detail = PwrDetailCommand(await self._exec_cmd(f"pwr {pack_id}"))
+
+        try:
+            bat = BatPackCommand(await self._exec_cmd(f"bat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'bat <index>'
+            bat = None
+        cell_voltages = bat.cell_voltages if bat is not None else []
+        # A bat reply that parses to zero cells is treated as "unsupported"
+        # (None), not a real count of 0, keeping the None-vs-0 distinction.
+        cells_balancing = bat.balancing_count if (bat is not None and bat.cells) else None
+
         remaining = (
             detail.total_capacity * pack.soc / 100
             if detail.total_capacity is not None
@@ -202,6 +247,8 @@ class TCPConsoleProtocol(ProtocolBase):
         if detail.system_fault is not None:
             status_groups["system_fault"] = detail.system_fault
 
+        cycle_count, protection_events = await self._stat_for_pack(pack_id)
+
         return BatteryData(
             pack_voltage=pack.volt,
             pack_current=pack.curr,
@@ -211,7 +258,7 @@ class TCPConsoleProtocol(ProtocolBase):
             power=pack.volt * pack.curr,
             temperatures={"pack": pack.temp},
             avg_temperature=None,
-            cell_voltages=[],
+            cell_voltages=cell_voltages,
             cell_temps=[],
             base_state=pack.base_state,
             volt_state=pack.volt_state,
@@ -221,8 +268,10 @@ class TCPConsoleProtocol(ProtocolBase):
             cell_volt_high=pack.cell_volt_high,
             cell_temp_low=pack.cell_temp_low,
             cell_temp_high=pack.cell_temp_high,
-            cycle_count=detail.cycle_count,
+            cells_balancing=cells_balancing,
             status_groups=status_groups,
+            cycle_count=cycle_count,
+            protection_events=protection_events,
         )
 
     async def _battery_data_legacy(self, pwr_lines: tuple[str, ...]) -> BatteryData:
@@ -296,7 +345,6 @@ class TCPConsoleProtocol(ProtocolBase):
             dc_voltage=pwr.dc_voltage.value,
             bat_voltage=pwr.bat_voltage.value,
             error_code=pwr.error_code.value,
-            cycle_count=None,
         )
 
     def __repr__(self) -> str:

@@ -148,13 +148,28 @@ The coordinator brackets each cycle with `connect()` then a per-pack loop then
 `disconnect()`. Per connection the protocol will:
 
 1. Fetch the flat `pwr` table **once** and cache it on the protocol instance.
-2. For each pack, fetch `pwr <index>` detail.
+2. For each pack, fetch `pwr <index>` detail and `bat <index>` per-cell data.
 3. Clear the cache on `disconnect()` (and on `connect()`).
 
-For a six-pack stack this is 1 flat + 6 detail = 7 `pwr` commands per 30 s
-cycle, plus `info` once at setup. `get_battery_data(pack_id)` merges the cached
-flat row and the pack's detail into one `BatteryData`. The coordinator loop is
-unchanged.
+For a six-pack stack this is 1 flat + 6 detail + 6 per-cell = 13 commands per
+30 s cycle, plus `info` once at setup. `get_battery_data(pack_id)` merges the
+cached flat row, the pack's detail, and its per-cell data into one
+`BatteryData`. The coordinator loop is unchanged.
+
+### Per-cell data (`bat <index>`)
+
+`bat <index>` returns one row per cell (15 on a US5000 pack): cell index,
+voltage (mV), current, temperature, base/volt/curr/temp states, SOC, coulomb
+(two tokens, e.g. `92713 mAH`), and a balancing flag (`Y`/`N`). Per the chosen
+scope we surface only per-cell **voltages** and a per-pack **count of cells
+balancing** (skipping the redundant per-cell temp/SOC, which the flat table's
+extremes already summarise). A new `BatPackCommand` parser reads the cell
+voltage (token 1) and the balancing flag (last token); using the first, second,
+and last tokens avoids the two-token `Coulomb` field. Cell voltages populate the
+existing `BatteryData.cell_voltages` list (flattened to `cell_voltage_0..N`
+sensors by existing code); the balancing count uses a new
+`cells_balancing` field. The `bat <index>` fetch is wrapped so a device that
+rejects it degrades to no cell data rather than failing.
 
 ### Parsing (in `pylontech.py`, no Home Assistant imports)
 
@@ -169,6 +184,54 @@ unchanged.
   (SOC), Total Coulomb (capacity), Max Voltage, Charge Times (cycle count), and
   the Basic/Volt/Current/Tmpr/Coul/Soh statuses, Heater status, and System
   Fault. Unit conversions: mV→V, mA→A, mC→C, mAh→Ah.
+
+### Per-pack device identity (`info <index>`)
+
+Originally `get_device_info()` called plain `info` once and the coordinator
+cloned that single result to every pack, so a mixed stack (e.g. pack 2 =
+US5000, pack 3 = US2000C) showed the same model/serial/firmware on every pack
+device. Two defects:
+
+- **Global metadata.** Fix: fetch `info <pack_id>` per pack at setup (static
+  data, fetched once, not per cycle) and build each pack's Home Assistant
+  device from its own metadata (model, real barcode as serial, firmware,
+  hardware version, cell count).
+- **Fragile `InfoCommand` parse.** The parser matched each field only against
+  the current first line and advanced only on a match, so an unexpected line
+  (`Board : NF4.E3`, present between `Board version` and `Main Soft version`
+  in `info <index>` output) stalled it: everything after that line
+  (`Main Soft version`, `Barcode`, `Cell Number`, ...) failed to parse,
+  surfacing as "Unknown". Fix: parse order-independently by building a
+  whitespace-normalised `key -> value` dict from the `key : value` lines, then
+  reading known keys. Barcode is read from the `Barcode` field (with
+  `Module Barcode` as a fallback).
+
+Device and entity identities therefore change to real per-pack barcodes; the
+entity `unique_id` scheme is bumped (`-v3`) so Home Assistant recreates
+entities with correct identities. The config-entry identity is left unchanged
+so the integration instance is not re-onboarded.
+
+### Statistics (`stat <index>`)
+
+The `pwr <index>` detail view's `Charge Times` is not a real cycle counter (it
+reads ~40000 and is 0 on all packs but one), so it is not surfaced. The
+`stat <index>` command provides the real per-pack lifetime statistics:
+
+- **`CYCLE Times`** is the genuine battery cycle count (e.g. 725 / 693 / 919),
+  surfaced as the `cycle_count` sensor.
+- A **summed protection/fault-event count** (over-current, over/under voltage,
+  over/under temperature, short circuit, etc.) is surfaced as a single
+  `protection_events` diagnostic sensor. It is ~0 on healthy packs and large on
+  a failing one (a mixed-stack US2000C in testing showed ~9861), making it a
+  useful at-a-glance health flag.
+
+`stat`'s numeric `SOH` field is not surfaced: it reads 0 on healthy packs, so
+it is unreliable; the categorical `Soh. Status` from the `pwr` detail view is
+kept instead. A new `StatCommand` parser reads `stat` order-independently
+(tolerating line noise such as a corrupted `LifeWa}&(` label and the
+colon-less `Device address` line). `stat <index>` is fetched per pack per
+cycle, taking the per-cycle command count to 1 flat + 6 detail + 6 per-cell +
+6 stat = 19.
 
 ### Protocol layer (`protocol/tcp_console.py`)
 
@@ -250,8 +313,8 @@ here.
   target stack. Non-contiguous slots would need the coordinator to iterate the
   set of actually-present indices rather than a range.
 - The legacy header-format path is preserved but unverified.
-- 7 commands per cycle is heavier than a single-command design; acceptable at a
-  30 s interval.
+- 13 commands per cycle (1 flat + 6 detail + 6 per-cell) is heavier than a
+  single-command design; acceptable at a 30 s interval.
 
 ## Current sign convention (confirmed)
 

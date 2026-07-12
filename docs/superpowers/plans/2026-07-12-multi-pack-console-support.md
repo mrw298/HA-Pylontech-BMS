@@ -949,6 +949,1220 @@ git commit -m "docs: changelog for multi-pack console fixes"
 
 ---
 
+### Task 8: Per-cell `bat` parser
+
+Add a parser for the `bat <index>` per-cell table, exposing per-cell voltages and a balancing count.
+
+**Files:**
+- Modify: `custom_components/pylontech/pylontech.py` (add after `PwrDetailCommand`)
+- Create: `tests/fixtures/bat_pack1.txt`
+- Create: `tests/fixtures/bat_pack3.txt`
+- Test: `tests/test_bat_pack.py`
+
+**Interfaces:**
+- Consumes: nothing from other tasks.
+- Produces: `class BatCell` dataclass (`index: int`, `volt: float`, `balancing: bool`); `class BatPackCommand` with `__init__(self, lines)`, attribute `cells: list[BatCell]`, property `cell_voltages -> list[float]`, property `balancing_count -> int`.
+
+- [ ] **Step 1: Create the `bat 1` fixture**
+
+Create `tests/fixtures/bat_pack1.txt` (verbatim capture, header + 15 cell rows, all idle-ish, BAL all N):
+
+```
+Battery  Volt     Curr     Tempr    Base State   Volt. State  Curr. State  Temp. State  SOC          Coulomb      BAL
+0        3465     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+1        3465     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+2        3465     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+3        3455     -149     27800    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+4        3455     -149     27600    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+5        3465     -149     27600    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+6        3464     -149     27600    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+7        3457     -149     27600    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+8        3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+9        3456     -149     27300    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+10       3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+11       3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+12       3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+13       3454     -149     27300    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+14       3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+```
+
+- [ ] **Step 2: Create the `bat 3` fixture**
+
+Create `tests/fixtures/bat_pack3.txt` (verbatim capture, charging, cell 9 shows a `High` volt state at 3562 mV):
+
+```
+Battery  Volt     Curr     Tempr    Base State   Volt. State  Curr. State  Temp. State  SOC          Coulomb      BAL
+0        3525     388      27400    Charge       Normal       Normal       Normal       100%         45449 mAH      N
+1        3453     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+2        3454     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+3        3455     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+4        3450     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+5        3459     388      27300    Charge       Normal       Normal       Normal       99%         44788 mAH      N
+6        3448     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+7        3448     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+8        3449     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+9        3562     388      27300    Charge       High         Normal       Normal       100%         45449 mAH      N
+10       3455     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+11       3456     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+12       3457     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+13       3451     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+14       3403     388      27200    Charge       Normal       Normal       Normal       100%         45447 mAH      N
+```
+
+- [ ] **Step 3: Write the failing tests**
+
+Create `tests/test_bat_pack.py`:
+
+```python
+import pytest
+
+import pylontech
+from conftest import read_fixture
+
+
+def test_bat_parses_fifteen_cells():
+    bat = pylontech.BatPackCommand(read_fixture("bat_pack1.txt"))
+    assert len(bat.cells) == 15
+    assert len(bat.cell_voltages) == 15
+
+
+def test_bat_cell_voltage_values():
+    bat = pylontech.BatPackCommand(read_fixture("bat_pack1.txt"))
+    assert bat.cell_voltages[0] == pytest.approx(3.465)
+    assert bat.cell_voltages[3] == pytest.approx(3.455)
+
+
+def test_bat_no_cells_balancing_when_all_n():
+    bat = pylontech.BatPackCommand(read_fixture("bat_pack1.txt"))
+    assert bat.balancing_count == 0
+
+
+def test_bat_pack3_high_cell_still_parses():
+    bat = pylontech.BatPackCommand(read_fixture("bat_pack3.txt"))
+    assert len(bat.cells) == 15
+    # Cell 9 reports a High volt state at 3562 mV; voltage still parses.
+    assert bat.cell_voltages[9] == pytest.approx(3.562)
+
+
+def test_bat_balancing_count_counts_y_rows():
+    # Synthetic input (constructed for this test): two cells report BAL=Y.
+    lines = [
+        "Battery  Volt     Curr     Tempr    Base State   Volt. State  Curr. State  Temp. State  SOC          Coulomb      BAL",
+        "0        3465     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      Y",
+        "1        3466     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      N",
+        "2        3467     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      Y",
+    ]
+    bat = pylontech.BatPackCommand(lines)
+    assert bat.balancing_count == 2
+    assert bat.cell_voltages[0] == pytest.approx(3.465)
+    assert bat.cell_voltages[2] == pytest.approx(3.467)
+```
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+Run: `python -m pytest tests/test_bat_pack.py -v`
+Expected: FAIL with `AttributeError: module 'pylontech' has no attribute 'BatPackCommand'`.
+
+- [ ] **Step 5: Implement the parser**
+
+In `custom_components/pylontech/pylontech.py`, add after the `PwrDetailCommand` class:
+
+```python
+@dataclass
+class BatCell:
+    """One cell's data from a row of the `bat <index>` per-cell table."""
+
+    index: int
+    volt: float  # V
+    balancing: bool
+
+
+class BatPackCommand:
+    """Parses the `bat <index>` per-cell table for one pack.
+
+    Reads only the cell voltage (token 1) and the balancing flag (last
+    token). Using the first, second and last tokens avoids the two-token
+    `Coulomb` field ("92713 mAH"), which would otherwise shift positional
+    indices. Malformed rows are skipped.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by parsing every cell row."""
+        self.cells: list[BatCell] = []
+        for line in lines:
+            tokens = line.split()
+            if len(tokens) < 3 or not tokens[0].isdigit():
+                continue
+            try:
+                cell = BatCell(
+                    index=int(tokens[0]),
+                    volt=int(tokens[1]) / 1000,
+                    balancing=tokens[-1] == "Y",
+                )
+            except (ValueError, IndexError):
+                continue
+            self.cells.append(cell)
+
+    @property
+    def cell_voltages(self) -> list[float]:
+        """Return per-cell voltages in the order the cells were reported."""
+        return [cell.volt for cell in self.cells]
+
+    @property
+    def balancing_count(self) -> int:
+        """Return the number of cells currently balancing."""
+        return sum(1 for cell in self.cells if cell.balancing)
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `python -m pytest tests/test_bat_pack.py -v`
+Expected: PASS (5 passed). Then run the full suite `python -m pytest tests/ -v` (expect 20 passing).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add custom_components/pylontech/pylontech.py tests/test_bat_pack.py tests/fixtures/bat_pack1.txt tests/fixtures/bat_pack3.txt
+git commit -m "feat: parse per-cell bat data (voltages and balancing count)"
+```
+
+---
+
+### Task 9: Wire per-cell data into battery data and sensors
+
+Fetch `bat <pack_id>` on the flat path and surface per-cell voltages and the balancing count as sensors.
+
+**Files:**
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`_battery_data_flat` + import)
+- Modify: `custom_components/pylontech/models.py` (add `cells_balancing` field)
+- Modify: `custom_components/pylontech/coordinator.py` (`_flatten_battery_data`)
+- Modify: `custom_components/pylontech/sensor.py` (`SENSOR_MAPPINGS`)
+
+**Interfaces:**
+- Consumes: `BatPackCommand` from `pylontech` (Task 8); `BatteryData.cell_voltages` (existing), `BatteryData.cells_balancing` (added here).
+- Produces: `cell_voltage_0..N` and `cells_balancing` entries in the coordinator's flattened per-pack data.
+
+- [ ] **Step 1: Add the cells_balancing field to BatteryData**
+
+In `custom_components/pylontech/models.py`, in the `BatteryData` dataclass, add after the `error_code` field:
+
+```python
+    # Cells actively balancing (console bat command)
+    cells_balancing: int | None = None
+```
+
+- [ ] **Step 2: Import BatPackCommand in tcp_console**
+
+In `custom_components/pylontech/protocol/tcp_console.py`, add `BatPackCommand` to the existing `from pylontech import (...)` block (alphabetical order is fine, place it near `BatCommand`).
+
+- [ ] **Step 3: Fetch and merge bat data in the flat path**
+
+In `_battery_data_flat`, after the `detail = PwrDetailCommand(...)` line and before the `remaining = ...` line, add:
+
+```python
+        try:
+            bat = BatPackCommand(await self._exec_cmd(f"bat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'bat <index>'
+            bat = None
+        cell_voltages = bat.cell_voltages if bat is not None else []
+        cells_balancing = bat.balancing_count if bat is not None else None
+```
+
+Then in the `BatteryData(...)` call on the flat path, change `cell_voltages=[],` to `cell_voltages=cell_voltages,` and add `cells_balancing=cells_balancing,` (e.g. immediately after the `cycle_count=detail.cycle_count,` line).
+
+- [ ] **Step 4: Flatten cells_balancing in the coordinator**
+
+In `custom_components/pylontech/coordinator.py`, in `_flatten_battery_data`, after the cycle_count block:
+
+```python
+        # Cycle count (binary protocol)
+        if data.cycle_count is not None:
+            result["cycle_count"] = data.cycle_count
+```
+
+add:
+
+```python
+        # Cells balancing (console bat command)
+        if data.cells_balancing is not None:
+            result["cells_balancing"] = data.cells_balancing
+```
+
+(Cell voltages are already flattened to `cell_voltage_N` by the existing `enumerate(data.cell_voltages)` loop, so no change is needed for those.)
+
+- [ ] **Step 5: Add the sensor mapping**
+
+In `custom_components/pylontech/sensor.py`, in `SENSOR_MAPPINGS`, add near the `cycle_count` entry:
+
+```python
+    "cells_balancing": ("Cells Balancing", None, "cells", SensorStateClass.MEASUREMENT),
+```
+
+(`cell_voltage_N` keys are already handled by the `startswith("cell_voltage_")` branch in `_get_sensor_description`.)
+
+- [ ] **Step 6: Verify**
+
+Run each:
+- `python -m py_compile custom_components/pylontech/protocol/tcp_console.py`
+- `python -m py_compile custom_components/pylontech/models.py`
+- `python -m py_compile custom_components/pylontech/coordinator.py`
+- `python -m py_compile custom_components/pylontech/sensor.py`
+
+All expected: no output (exit 0). Then `python -m pytest tests/ -v` (expect 20 passing — parsers unaffected).
+
+- [ ] **Step 7: Review checklist (manual)**
+
+- `cell_voltages=cell_voltages` (not `[]`) on the flat path; `cells_balancing=cells_balancing` added.
+- `bat` fetch wrapped in try/except (degrades to empty list / None).
+- `cells_balancing` is a valid new field of `BatteryData`; flattened only when not None.
+- The `bat` fetch adds exactly one command per pack (now 13/cycle for 6 packs).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add custom_components/pylontech/protocol/tcp_console.py custom_components/pylontech/models.py custom_components/pylontech/coordinator.py custom_components/pylontech/sensor.py
+git commit -m "feat: surface per-cell voltages and balancing count as sensors"
+```
+
+---
+
+### Task 10: Order-tolerant `InfoCommand` parsing
+
+Rewrite `InfoCommand` so it parses the `info`/`info <index>` output by key, tolerating unexpected/reordered lines (which currently derail it and cause "Unknown" barcode/firmware).
+
+**Files:**
+- Modify: `custom_components/pylontech/pylontech.py` (replace `InfoCommand.__init__`, keep `__str__`)
+- Create: `tests/fixtures/info_pack2.txt`
+- Create: `tests/fixtures/info_pack3.txt`
+- Test: `tests/test_info.py`
+
+**Interfaces:**
+- Produces: `InfoCommand(lines)` exposing the same attributes as before (`device_address`, `manufacturer`, `device_name`, `board_version`, `hard_version`, `main_sw_version`, `sw_version`, `boot_version`, `comm_version`, `release_date`, `barcode`, `pcba_barcode`, `module_barcode`, `pwr_supply_barcode`, `device_test_time`, `specification`, `cell_number`, `max_discharge_current`, `max_charge_current`, `shut_circuit`, `relay_feedback`, `new_board`, `bmu_modules`, `bmu_pcbas`), each a `Sensor` with `.value` (or a list), but parsed order-independently.
+
+- [ ] **Step 1: Create the `info 2` fixture (US5000)**
+
+Create `tests/fixtures/info_pack2.txt` (verbatim capture, blank line dropped as `_exec_cmd` would):
+
+```
+Device address      : 2
+Manufacturer        : Pylon
+Device name         : US5000
+Board version       : V10R04
+Board               : NF4.E3
+Main Soft version   : B69.16.0.0
+Soft  version       : V1.3
+Boot  version       : V1.0
+Comm version        : V2.0
+Release Date        : 22-08-10
+Barcode             : Y230102C50000001
+Specification       : 48V/100AH
+Cell Number         : 15
+Max Dischg Curr     : -100000mA
+Max Charge Curr     : 100000mA
+EPONPort rate       : 1200
+Console Port rate   : 115200
+```
+
+- [ ] **Step 2: Create the `info 3` fixture (US2000C)**
+
+Create `tests/fixtures/info_pack3.txt`:
+
+```
+Device address      : 3
+Manufacturer        : Pylon
+Device name         : US2000C
+Board version       : V10R04
+Board               : NF4.E2
+Main Soft version   : B69.13.0.0
+Soft  version       : V1.4
+Boot  version       : V1.0
+Comm version        : V2.0
+Release Date        : 22-01-24
+Barcode             : K22D087C32000002
+Specification       : 48V/50AH
+Cell Number         : 15
+Max Dischg Curr     : -90000mA
+Max Charge Curr     : 90000mA
+EPONPort rate       : 1200
+Console Port rate   : 115200
+```
+
+- [ ] **Step 3: Write the failing tests**
+
+Create `tests/test_info.py`:
+
+```python
+import pylontech
+from conftest import read_fixture
+
+
+def test_info_pack2_us5000_all_fields():
+    info = pylontech.InfoCommand(read_fixture("info_pack2.txt"))
+    assert info.device_address.value == 2
+    assert info.manufacturer.value == "Pylon"
+    assert info.device_name.value == "US5000"
+    assert info.board_version.value == "V10R04"
+    assert info.main_sw_version.value == "B69.16.0.0"
+    assert info.sw_version.value == "V1.3"
+    assert info.barcode.value == "Y230102C50000001"
+    assert info.cell_number.value == 15
+    assert info.max_charge_current.value == 100000
+    assert info.max_discharge_current.value == -100000
+
+
+def test_info_pack3_us2000c():
+    info = pylontech.InfoCommand(read_fixture("info_pack3.txt"))
+    assert info.device_name.value == "US2000C"
+    assert info.barcode.value == "K22D087C32000002"
+    assert info.main_sw_version.value == "B69.13.0.0"
+    assert info.cell_number.value == 15
+    assert info.device_address.value == 3
+
+
+def test_info_not_derailed_by_unexpected_board_line():
+    # The 'Board : NF4.E3' line sits between 'Board version' and 'Main Soft
+    # version'. Under the old sequential parser it stalled parsing and left
+    # barcode/firmware None. Order-independent parsing must read them.
+    info = pylontech.InfoCommand(read_fixture("info_pack2.txt"))
+    assert info.barcode.value is not None
+    assert info.main_sw_version.value is not None
+    assert info.hard_version.value is None  # no 'Hard version' line present
+```
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+Run: `python -m pytest tests/test_info.py -v`
+Expected: FAIL — under the current sequential parser, `info.barcode.value` is `None` (the `Board` line stalls parsing), so the assertions fail.
+
+- [ ] **Step 5: Replace `InfoCommand.__init__`**
+
+In `custom_components/pylontech/pylontech.py`, replace the body of `InfoCommand.__init__` (the current sequential `.fetch(source)` calls and the bmu scan) with the order-independent version below. Keep the class docstring and the `__str__` method as they are.
+
+```python
+    def __init__(self, lines: tuple[str]) -> None:
+        """Initialize the info command.
+
+        Parses the `key : value` lines into a dict keyed by the
+        whitespace-normalised label, so unexpected or reordered lines (for
+        example a `Board` line between `Board version` and `Main Soft
+        version`) do not derail the parse.
+        """
+        fields: dict[str, str] = {}
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            fields[" ".join(key.split())] = value.strip()
+
+        def text(label: str) -> Text:
+            sensor = Text(label)
+            if fields.get(label):
+                sensor.value = fields[label]
+            return sensor
+
+        def integer(label: str) -> Integer:
+            sensor = Integer(label)
+            raw = fields.get(label)
+            if raw:
+                try:
+                    sensor.value = int(raw)
+                except ValueError:
+                    pass
+            return sensor
+
+        def current(label: str) -> Current:
+            sensor = Current(label)
+            raw = fields.get(label)
+            if raw:
+                try:
+                    sensor.value = int(raw.replace("mA", "").strip())
+                except ValueError:
+                    pass
+            return sensor
+
+        self.device_address = integer("Device address")
+        self.manufacturer = text("Manufacturer")
+        self.device_name = text("Device name")
+        self.board_version = text("Board version")
+        self.hard_version = text("Hard version")
+        self.main_sw_version = text("Main Soft version")
+        self.sw_version = text("Soft version")
+        self.boot_version = text("Boot version")
+        self.comm_version = text("Comm version")
+        self.release_date = text("Release Date")
+        self.barcode = text("Barcode")
+        self.pcba_barcode = text("PCBA Barcode")
+        self.module_barcode = text("Module Barcode")
+        self.pwr_supply_barcode = text("PowerSupply Barcode")
+        self.device_test_time = text("Device Test Time")
+        self.specification = text("Specification")
+        self.cell_number = integer("Cell Number")
+        self.max_discharge_current = current("Max Dischg Curr")
+        self.max_charge_current = current("Max Charge Curr")
+        self.shut_circuit = text("Shut Circuit")
+        self.relay_feedback = text("Relay Feedback")
+        self.new_board = text("New Board")
+
+        self.bmu_modules: list[str] = []
+        self.bmu_pcbas: list[str] = []
+        for line in lines:
+            if line.startswith("Module"):
+                self.bmu_modules.insert(0, line.split()[2])
+            if line.startswith("PCBA"):
+                self.bmu_pcbas.insert(0, line.split()[2])
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `python -m pytest tests/test_info.py -v`
+Expected: PASS (3 passed). Then run the full suite `python -m pytest tests/ -v` (expect 23 passing).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add custom_components/pylontech/pylontech.py tests/test_info.py tests/fixtures/info_pack2.txt tests/fixtures/info_pack3.txt
+git commit -m "fix: parse info output order-independently (fixes Unknown barcode/firmware)"
+```
+
+---
+
+### Task 11: Per-pack `info <index>` fetch in the protocol
+
+Let `get_device_info` fetch a specific pack's info and prefer the `Barcode` field.
+
+**Files:**
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`info` and `get_device_info`)
+
+**Interfaces:**
+- Consumes: order-tolerant `InfoCommand` (Task 10).
+- Produces: `info(self, pack_id: int | None = None)`; `get_device_info(self, pack_id: int | None = None) -> DeviceInfo` (per-pack when `pack_id` given; `pack_count` computed only for the top-level call).
+
+- [ ] **Step 1: Make `info` accept a pack id**
+
+Replace the existing `info` method:
+
+```python
+    async def info(self) -> InfoCommand:
+        """Invoke 'info' console command."""
+        return InfoCommand(await self._exec_cmd("info"))
+```
+
+with:
+
+```python
+    async def info(self, pack_id: int | None = None) -> InfoCommand:
+        """Invoke the 'info' console command, optionally for one pack."""
+        cmd = "info" if pack_id is None else f"info {pack_id}"
+        return InfoCommand(await self._exec_cmd(cmd))
+```
+
+- [ ] **Step 2: Make `get_device_info` per-pack aware**
+
+Replace the `get_device_info` method's signature and body so it takes an optional `pack_id`, only computes `pack_count` for the top-level (no-id) call, and prefers the `Barcode` field:
+
+```python
+    async def get_device_info(self, pack_id: int | None = None) -> DeviceInfo:
+        """Retrieve device information.
+
+        With no `pack_id`, returns the top-level info and computes `pack_count`
+        from the flat `pwr` table. With a `pack_id`, returns that pack's own
+        metadata (`info <pack_id>`) and leaves `pack_count` unset.
+        """
+        info = await self.info(pack_id)
+
+        if pack_id is None:
+            pwr_lines = await self._pwr_table_lines()
+            pack_count = (
+                PwrTableCommand(pwr_lines).pack_count if is_flat_pwr(pwr_lines) else 1
+            )
+        else:
+            pack_count = None
+
+        barcode = info.barcode.value or info.module_barcode.value or "Unknown"
+        firmware = info.main_sw_version.value or info.sw_version.value or "Unknown"
+
+        return DeviceInfo(
+            manufacturer=info.manufacturer.value if info.manufacturer.value else "Pylontech",
+            model=info.device_name.value if info.device_name.value else "Unknown",
+            barcode=barcode,
+            firmware_version=firmware,
+            connection_type=ConnectionType.TCP_CONSOLE,
+            variant=BatteryVariant.PYLONTECH_STANDARD,
+            pack_count=pack_count,
+            device_name=info.device_name.value,
+            hardware_version=info.hard_version.value,
+            device_address=info.device_address.value,
+            cell_count=info.cell_number.value,
+            max_charge_current=info.max_charge_current.value,
+            max_discharge_current=info.max_discharge_current.value,
+            bmu_modules=list(info.bmu_modules),
+            bmu_pcbas=list(info.bmu_pcbas),
+        )
+```
+
+- [ ] **Step 3: Verify**
+
+Run: `python -m py_compile custom_components/pylontech/protocol/tcp_console.py` (exit 0), then `python -m pytest tests/ -v` (expect 23 passing).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add custom_components/pylontech/protocol/tcp_console.py
+git commit -m "feat: fetch per-pack info via 'info <index>', prefer Barcode field"
+```
+
+---
+
+### Task 12: Per-pack device identity in setup, coordinator and sensors
+
+Fetch each pack's info at setup and give each pack device its own model/serial/firmware; recreate entities with real per-pack barcodes.
+
+**Files:**
+- Modify: `custom_components/pylontech/__init__.py` (fetch per-pack infos, pass to coordinator)
+- Modify: `custom_components/pylontech/coordinator.py` (`__init__`, `_pack_device`, add `_pack_serial` / `pack_serial`)
+- Modify: `custom_components/pylontech/sensor.py` (entity `unique_id`)
+
+**Interfaces:**
+- Consumes: `protocol.get_device_info(pack_id)` (Task 11).
+- Produces: `PylontechUpdateCoordinator(..., pack_infos: dict[int, DeviceInfo] | None = None)`; `coordinator.pack_serial(pack_id) -> str`.
+
+- [ ] **Step 1: Fetch per-pack infos in setup**
+
+In `custom_components/pylontech/__init__.py`, in `async_setup_entry`, replace the connect/get-info block:
+
+```python
+    try:
+        await protocol.connect()
+        device_info = await protocol.get_device_info()
+        _LOGGER.info(
+            "Successfully connected to %s %s (barcode: %s, firmware: %s)",
+            device_info.manufacturer,
+            device_info.model,
+            device_info.barcode,
+            device_info.firmware_version,
+        )
+    except Exception as err:
+        _LOGGER.error("Failed to connect to Pylontech BMS: %s", err)
+        raise ConfigEntryNotReady from err
+    finally:
+        await protocol.disconnect()
+
+    # Create update coordinator
+    device_name = entry.data.get(CONF_DEVICE_NAME, "Battery")
+    coordinator = PylontechUpdateCoordinator(hass, entry, protocol, device_info, device_name)
+```
+
+with:
+
+```python
+    try:
+        await protocol.connect()
+        device_info = await protocol.get_device_info()
+        _LOGGER.info(
+            "Successfully connected to %s %s (barcode: %s, firmware: %s)",
+            device_info.manufacturer,
+            device_info.model,
+            device_info.barcode,
+            device_info.firmware_version,
+        )
+        # Fetch each pack's own metadata so mixed stacks show correct
+        # per-pack model/serial/firmware. Static data, fetched once.
+        pack_infos: dict[int, DeviceInfo] = {}
+        for pack_id in range(1, (device_info.pack_count or 1) + 1):
+            try:
+                pack_infos[pack_id] = await protocol.get_device_info(pack_id)
+            except Exception as err:  # noqa: BLE001 - fall back to top-level info
+                _LOGGER.warning("Failed to fetch info for pack %d: %s", pack_id, err)
+                pack_infos[pack_id] = device_info
+    except Exception as err:
+        _LOGGER.error("Failed to connect to Pylontech BMS: %s", err)
+        raise ConfigEntryNotReady from err
+    finally:
+        await protocol.disconnect()
+
+    # Create update coordinator
+    device_name = entry.data.get(CONF_DEVICE_NAME, "Battery")
+    coordinator = PylontechUpdateCoordinator(
+        hass, entry, protocol, device_info, device_name, pack_infos
+    )
+```
+
+Add `DeviceInfo` to the imports at the top of `__init__.py`:
+
+```python
+from .models import DeviceInfo
+```
+
+(place it near the other local imports, e.g. after the `from .coordinator import ...` line).
+
+- [ ] **Step 2: Accept and use per-pack infos in the coordinator**
+
+In `custom_components/pylontech/coordinator.py`, change the `__init__` signature to add `pack_infos`:
+
+```python
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        protocol: ProtocolBase,
+        device_info: DeviceInfo,
+        device_name: str = "Battery",
+        pack_infos: dict[int, DeviceInfo] | None = None,
+    ) -> None:
+```
+
+Then replace the body from `self.serial_nr = ...` down to the `pack_device_infos` assignment with:
+
+```python
+        self.protocol = protocol
+        self.device_info_model = device_info
+        self.pack_infos = pack_infos or {}
+        self.pack_count = device_info.pack_count or 1
+        self.device_name = device_name
+
+        # Integration identity: prefer a real per-pack barcode over the
+        # top-level info's barcode (which may be "Unknown" on some firmware).
+        first = self.pack_infos.get(1)
+        self.serial_nr = (
+            first.barcode
+            if first is not None and first.barcode and first.barcode != "Unknown"
+            else device_info.barcode
+        )
+
+        # Create device info for each pack from that pack's own metadata.
+        self.pack_device_infos = tuple(
+            _pack_device(self._pack_info(pack_id), pack_id, device_name)
+            for pack_id in range(1, self.pack_count + 1)
+        )
+        # Store available sensors per pack: {pack_id: {sensor_name: type}}
+        self.available_sensors_per_pack: dict[int, dict[str, type]] = {}
+```
+
+(The existing lines `self.protocol = protocol` and `self.device_info_model = device_info` are part of this replaced block; do not duplicate them.)
+
+- [ ] **Step 3: Add pack-info and pack-serial helpers to the coordinator**
+
+Add these two methods to `PylontechUpdateCoordinator` (e.g. after `sensor_value`):
+
+```python
+    def _pack_info(self, pack_id: int) -> DeviceInfo:
+        """Return a pack's own DeviceInfo, falling back to the top-level info."""
+        return self.pack_infos.get(pack_id, self.device_info_model)
+
+    def pack_serial(self, pack_id: int) -> str:
+        """Return the stable per-pack serial (real barcode where available)."""
+        return _pack_serial(self._pack_info(pack_id), pack_id)
+```
+
+- [ ] **Step 4: Rework `_pack_device` and add `_pack_serial`**
+
+In `coordinator.py`, replace the `_pack_device` function with a version that keys the device by the pack's real barcode, and add a shared `_pack_serial` helper just above it:
+
+```python
+def _pack_serial(info: DeviceInfo, pack_id: int) -> str:
+    """Return the pack serial: its real barcode, or a stable fallback."""
+    if info.barcode and info.barcode != "Unknown":
+        return info.barcode
+    return f"Unknown_pack{pack_id}"
+
+
+def _pack_device(info: DeviceInfo, pack_id: int, device_name: str = "Battery") -> HADeviceInfo:
+    """Create Home Assistant device info for one battery pack.
+
+    Args:
+        info: That pack's own DeviceInfo.
+        pack_id: Pack ID (1-based).
+        device_name: Custom base name for the device (default: "Battery").
+
+    Returns:
+        Home Assistant DeviceInfo for the pack.
+    """
+    pack_serial = _pack_serial(info, pack_id)
+    return HADeviceInfo(
+        identifiers={(DOMAIN, pack_serial)},
+        name=f"{info.manufacturer} {device_name} Pack {pack_id}",
+        model=info.model,
+        manufacturer=info.manufacturer,
+        sw_version=info.firmware_version,
+        hw_version=info.hardware_version,
+        serial_number=pack_serial,
+    )
+```
+
+- [ ] **Step 5: Use the per-pack serial in entity unique_id**
+
+In `custom_components/pylontech/sensor.py`, replace:
+
+```python
+        # Set unique ID including pack ID
+        # Added v2 suffix to force recreation of entities with correct naming
+        self._attr_unique_id = f"{sensor_key}-pack{pack_id}-{coordinator.serial_nr}-v2"
+```
+
+with:
+
+```python
+        # Unique ID keyed by the pack's real barcode so each physical pack's
+        # entities are stable. v3 forces recreation after the identity fix.
+        self._attr_unique_id = f"{sensor_key}-{coordinator.pack_serial(pack_id)}-v3"
+```
+
+- [ ] **Step 6: Verify**
+
+Run each `python -m py_compile ...` on the three changed modules (`__init__.py`, `coordinator.py`, `sensor.py`) — all exit 0. Then `python -m pytest tests/ -v` (expect 23 passing — parsers unaffected).
+
+- [ ] **Step 7: Review checklist (manual)**
+
+- Setup fetches `info <pack_id>` for each pack, falling back to the top-level info on failure.
+- Coordinator builds each pack device from that pack's own info; `pack_serial`/`_pack_serial` used consistently by both `_pack_device` and the entity `unique_id`.
+- `serial_nr` prefers a real pack-1 barcode.
+- Entity `unique_id` bumped to `-v3` and keyed by the real per-pack barcode.
+- Config-entry unique_id / config_flow untouched.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add custom_components/pylontech/__init__.py custom_components/pylontech/coordinator.py custom_components/pylontech/sensor.py
+git commit -m "feat: per-pack device identity from info <index> (model/serial/firmware)"
+```
+
+---
+
+### Task 13: `stat` parser (cycle count + protection-event summary)
+
+Add a parser for the `stat <index>` statistics table exposing the real cycle count and a summed protection/fault-event count.
+
+**Files:**
+- Modify: `custom_components/pylontech/pylontech.py` (add after `BatPackCommand`)
+- Create: `tests/fixtures/stat_pack1.txt`
+- Create: `tests/fixtures/stat_pack3.txt`
+- Test: `tests/test_stat.py`
+
+**Interfaces:**
+- Produces: module constant `_STAT_PROTECTION_KEYS` (tuple of str); `class StatCommand` with `__init__(self, lines)`, attributes `cycle_count: int | None` (from `CYCLE Times`) and `protection_events: int | None` (sum of the protection counters present).
+
+- [ ] **Step 1: Create the `stat 1` fixture (clean, with line noise)**
+
+Create `tests/fixtures/stat_pack1.txt` (verbatim capture; note the colon-less `Device address` line and the corrupted `LifeWa}&(` label):
+
+```
+Device address           1
+Data Items      :       47
+HisData Items   :     1793
+Charge Cnt.     :        0
+Discharge Cnt.  :        0
+Charge Times    :    40477
+Status Cnt.     :     5214
+Idle Times      :    35807
+COC Times       :        0
+COC2 Times      :        0
+DOC Times       :        0
+DOC2 Times      :        0
+COCA Times      :        0
+DOCA Times      :        0
+SC Times        :        0
+Bat OV Times    :        0
+Bat HV Times    :        0
+Bat LV Times    :        0
+Bat UV Times    :        0
+Bat SLP Times   :        0
+Pwr OV Times    :        0
+Pwr HV Times    :        0
+Pwr LV Times    :        0
+Pwr UV Times    :        0
+Pwr SLP Times   :        0
+COT Times       :        0
+CUT Times       :        0
+DOT Times       :        0
+DUT Times       :        0
+CHT Times       :        0
+CLT Times       :        0
+DHT Times       :        0
+DLT Times       :        0
+Shut Times      :        0
+Reset Times     :       18
+RV Times        :        0
+Input OV Times  :        0
+SOH Times       :        0
+BMICERR Times   :        0
+CYCLE Times     :      725
+SOH             :       93
+Pwr Percent     :      100
+Pwr Coulomb     : 333770760
+Dsg Cap         : 72500577
+HT@0.5C Cnt     :        0
+LT@0.5C Cnt     :        0
+HT Cnt          :        0
+LT Cnt          :        0
+LV Cnt          :        0
+LifeWa}&(  :        0
+LifeAlarm Times :        0
+```
+
+- [ ] **Step 2: Create the `stat 3` fixture (heavy protection events)**
+
+Create `tests/fixtures/stat_pack3.txt`:
+
+```
+Device address           3
+Data Items      :     1692
+HisData Items   :     1793
+Charge Cnt.     :        0
+Discharge Cnt.  :        0
+Charge Times    :    47263
+Status Cnt.     :     5197
+Idle Times      :     7220
+COC Times       :        0
+COC2 Times      :        0
+DOC Times       :        0
+DOC2 Times      :        0
+COCA Times      :     1907
+DOCA Times      :        0
+SC Times        :        0
+Bat OV Times    :     6988
+Bat HV Times    :      716
+Bat LV Times    :      162
+Bat UV Times    :        6
+Bat SLP Times   :        0
+Pwr OV Times    :        0
+Pwr HV Times    :        0
+Pwr LV Times    :       82
+Pwr UV Times    :        0
+Pwr SLP Times   :        0
+COT Times       :        0
+CUT Times       :        0
+DOT Times       :        0
+DUT Times       :        0
+CHT Times       :        0
+CLT Times       :        0
+DHT Times       :        0
+DLT Times       :        0
+Shut Times      :       81
+Reset Times     :      102
+RV Times        :        0
+Input OV Times  :        0
+SOH Times       :     1442
+BMICERR Times   :        0
+CYCLE Times     :      919
+SOH             :        0
+Pwr Percent     :       98
+Pwr Coulomb     : 160142520
+Dsg Cap         : 45985551
+HT@0.5C Cnt     :        0
+LT@0.5C Cnt     :        0
+HT Cnt          :        0
+LT Cnt          :        0
+LV Cnt          :  1578321
+LifeWarn Times  :        0
+LifeAlarm Times :        0
+```
+
+- [ ] **Step 3: Write the failing tests**
+
+Create `tests/test_stat.py`:
+
+```python
+import pylontech
+from conftest import read_fixture
+
+
+def test_stat_pack1_cycle_count_and_no_faults():
+    stat = pylontech.StatCommand(read_fixture("stat_pack1.txt"))
+    assert stat.cycle_count == 725
+    assert stat.protection_events == 0
+
+
+def test_stat_pack3_cycle_count_and_fault_sum():
+    stat = pylontech.StatCommand(read_fixture("stat_pack3.txt"))
+    assert stat.cycle_count == 919
+    # COCA 1907 + Bat OV 6988 + Bat HV 716 + Bat LV 162 + Bat UV 6 + Pwr LV 82
+    assert stat.protection_events == 9861
+
+
+def test_stat_tolerates_line_noise_and_colonless_line():
+    # The corrupted 'LifeWa}&(' label and the colon-less 'Device address'
+    # line must not break parsing of CYCLE Times / protection counts.
+    stat = pylontech.StatCommand(read_fixture("stat_pack1.txt"))
+    assert stat.cycle_count == 725
+
+
+def test_stat_missing_fields_are_none():
+    stat = pylontech.StatCommand(["Device address           1"])
+    assert stat.cycle_count is None
+    assert stat.protection_events is None
+```
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+Run: `python -m pytest tests/test_stat.py -v`
+Expected: FAIL with `AttributeError: module 'pylontech' has no attribute 'StatCommand'`.
+
+- [ ] **Step 5: Implement the parser**
+
+In `custom_components/pylontech/pylontech.py`, add after the `BatPackCommand` class:
+
+```python
+# Protection/fault event counters summed into one diagnostic total. Excludes
+# informational counters (charge/idle/status counts, cycle count, SOH, etc.).
+_STAT_PROTECTION_KEYS = (
+    "COC Times", "COC2 Times", "DOC Times", "DOC2 Times",
+    "COCA Times", "DOCA Times", "SC Times",
+    "Bat OV Times", "Bat HV Times", "Bat LV Times", "Bat UV Times",
+    "Pwr OV Times", "Pwr HV Times", "Pwr LV Times", "Pwr UV Times",
+    "COT Times", "CUT Times", "DOT Times", "DUT Times",
+    "CHT Times", "CLT Times", "DHT Times", "DLT Times",
+    "Input OV Times",
+)
+
+
+class StatCommand:
+    """Parses the `stat <index>` per-pack statistics table.
+
+    Order-independent key/value parse, tolerating line noise (e.g. a corrupted
+    `LifeWa}&(` label) and the colon-less `Device address` line. Exposes the
+    real cycle count (`CYCLE Times`) and a summed protection/fault-event count.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by parsing the key/value statistics lines."""
+        fields: dict[str, str] = {}
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            fields[" ".join(key.split())] = value.strip()
+
+        def as_int(label: str) -> int | None:
+            raw = fields.get(label)
+            if raw is None:
+                return None
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+
+        self.cycle_count: int | None = as_int("CYCLE Times")
+
+        total = 0
+        seen = False
+        for key in _STAT_PROTECTION_KEYS:
+            value = as_int(key)
+            if value is not None:
+                total += value
+                seen = True
+        self.protection_events: int | None = total if seen else None
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `python -m pytest tests/test_stat.py -v`
+Expected: PASS (4 passed). Then run the full suite `python -m pytest tests/ -v` (expect 28 passing).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add custom_components/pylontech/pylontech.py tests/test_stat.py tests/fixtures/stat_pack1.txt tests/fixtures/stat_pack3.txt
+git commit -m "feat: parse stat (real cycle count and protection-event summary)"
+```
+
+---
+
+### Task 14: Wire cycle count and protection events into sensors
+
+Fetch `stat <pack_id>` on the flat path and surface the real cycle count and a protection-events count.
+
+**Files:**
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`_battery_data_flat` + import)
+- Modify: `custom_components/pylontech/models.py` (add `protection_events` field)
+- Modify: `custom_components/pylontech/coordinator.py` (`_flatten_battery_data`)
+- Modify: `custom_components/pylontech/sensor.py` (`SENSOR_MAPPINGS`)
+
+**Interfaces:**
+- Consumes: `StatCommand` (Task 13); existing `BatteryData.cycle_count`; new `BatteryData.protection_events`.
+- Produces: `cycle_count` and `protection_events` entries in the coordinator's flattened per-pack data.
+
+- [ ] **Step 1: Add the protection_events field to BatteryData**
+
+In `custom_components/pylontech/models.py`, in the `BatteryData` dataclass, add after the `cells_balancing` field:
+
+```python
+    # Summed protection/fault events (console stat command)
+    protection_events: int | None = None
+```
+
+- [ ] **Step 2: Import StatCommand in tcp_console**
+
+In `custom_components/pylontech/protocol/tcp_console.py`, add `StatCommand` to the existing `from pylontech import (...)` block.
+
+- [ ] **Step 3: Fetch and merge stat data in the flat path**
+
+In `_battery_data_flat`, after the `bat`/`cells_balancing` block and before the `BatteryData(...)` return, add:
+
+```python
+        try:
+            stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+            stat = None
+        cycle_count = stat.cycle_count if stat is not None else None
+        protection_events = stat.protection_events if stat is not None else None
+```
+
+Then in the `BatteryData(...)` call on the flat path, add `cycle_count=cycle_count,` and `protection_events=protection_events,` (e.g. after `cells_balancing=cells_balancing,`).
+
+Note: the console flat path previously did not set `cycle_count` (it was removed when the unreliable `pwr` `Charge Times` source was dropped). It is now set from `stat`.
+
+- [ ] **Step 4: Flatten protection_events in the coordinator**
+
+In `custom_components/pylontech/coordinator.py`, in `_flatten_battery_data`, after the `cycle_count` block:
+
+```python
+        # Cycle count (binary protocol)
+        if data.cycle_count is not None:
+            result["cycle_count"] = data.cycle_count
+```
+
+add:
+
+```python
+        # Protection/fault event summary (console stat command)
+        if data.protection_events is not None:
+            result["protection_events"] = data.protection_events
+```
+
+- [ ] **Step 5: Add the sensor mapping**
+
+In `custom_components/pylontech/sensor.py`, in `SENSOR_MAPPINGS`, add near the `cycle_count` entry:
+
+```python
+    "protection_events": ("Protection Events", None, "events", SensorStateClass.TOTAL_INCREASING),
+```
+
+- [ ] **Step 6: Verify**
+
+Run each `python -m py_compile ...` on the four changed modules (`tcp_console.py`, `models.py`, `coordinator.py`, `sensor.py`) — all exit 0. Then `python -m pytest tests/ -v` (expect 28 passing — parsers unaffected).
+
+- [ ] **Step 7: Review checklist (manual)**
+
+- `stat <pack_id>` fetch wrapped in try/except (degrades to None on unsupported).
+- `cycle_count` set from `stat` on the flat path (re-added); `protection_events` added.
+- `protection_events` is a valid new `BatteryData` field; flattened only when not None.
+- `stat` fetch adds exactly one command per pack (now 19/cycle for 6 packs).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add custom_components/pylontech/protocol/tcp_console.py custom_components/pylontech/models.py custom_components/pylontech/coordinator.py custom_components/pylontech/sensor.py
+git commit -m "feat: surface real cycle count and protection-event summary from stat"
+```
+
+---
+
+### Task 15: Throttle `stat` to a 30-minute cadence
+
+`stat` reports slow-moving lifetime counters, so poll it at most every 30 minutes and cache the values across update cycles, instead of fetching it every 30 s cycle. Reduces steady-state load from 19 back to 13 commands/cycle (spiking to 19 once per 30 min).
+
+**Files:**
+- Modify: `custom_components/pylontech/const.py` (add interval constant)
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`__init__`, import, new throttled helper, `_battery_data_flat`)
+
+**Interfaces:**
+- Consumes: `StatCommand` (Task 13), `STAT_SCAN_INTERVAL_SECONDS`.
+- Produces: `TCPConsoleProtocol._stat_for_pack(pack_id) -> tuple[int | None, int | None]` (throttled `(cycle_count, protection_events)`).
+
+- [ ] **Step 1: Add the interval constant**
+
+In `custom_components/pylontech/const.py`, after `SCAN_INTERVAL = timedelta(seconds=30)`, add:
+
+```python
+# `stat` reports slow-moving lifetime counters (cycle count, fault totals),
+# so it is polled at most this often rather than every SCAN_INTERVAL cycle.
+STAT_SCAN_INTERVAL_SECONDS = 1800  # 30 minutes
+```
+
+- [ ] **Step 2: Import `time` and the constant in tcp_console**
+
+In `custom_components/pylontech/protocol/tcp_console.py`:
+- Add `import time` with the other stdlib imports near the top (after `import logging`).
+- Add `STAT_SCAN_INTERVAL_SECONDS` to the existing `from ..const import (...)` statement (it currently imports `BatteryVariant, ConnectionType`).
+
+- [ ] **Step 3: Add the stat cache fields to `__init__`**
+
+In `TCPConsoleProtocol.__init__`, after the `self._pwr_lines` line, add:
+
+```python
+        # `stat` is polled on a slower cadence than the 30 s cycle; these
+        # persist ACROSS connections (unlike the pwr cache) and are not
+        # cleared on connect/disconnect.
+        self._stat_cache: dict[int, tuple[int | None, int | None]] = {}
+        self._stat_deadline: float | None = None
+```
+
+(Do NOT clear these in `connect`/`disconnect` — they must survive across cycles.)
+
+- [ ] **Step 4: Add the throttled helper**
+
+Add this method to `TCPConsoleProtocol` (e.g. after `_pwr_table_lines`):
+
+```python
+    async def _stat_for_pack(self, pack_id: int) -> tuple[int | None, int | None]:
+        """Return (cycle_count, protection_events) for a pack from `stat`.
+
+        `stat` carries slow-moving lifetime counters, so it is fetched at most
+        once per STAT_SCAN_INTERVAL_SECONDS and cached across update cycles.
+        A failed fetch is not cached, so it retries on the next cycle.
+        """
+        now = time.monotonic()
+        if self._stat_deadline is None or now >= self._stat_deadline:
+            self._stat_cache = {}
+            self._stat_deadline = now + STAT_SCAN_INTERVAL_SECONDS
+        if pack_id not in self._stat_cache:
+            try:
+                stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+            except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+                return (None, None)
+            self._stat_cache[pack_id] = (stat.cycle_count, stat.protection_events)
+        return self._stat_cache[pack_id]
+```
+
+- [ ] **Step 5: Use the helper in `_battery_data_flat`**
+
+In `_battery_data_flat`, replace the inline stat fetch block (added in Task 14):
+
+```python
+        try:
+            stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+            stat = None
+        cycle_count = stat.cycle_count if stat is not None else None
+        protection_events = stat.protection_events if stat is not None else None
+```
+
+with:
+
+```python
+        cycle_count, protection_events = await self._stat_for_pack(pack_id)
+```
+
+- [ ] **Step 6: Verify**
+
+Run: `python -m py_compile custom_components/pylontech/const.py custom_components/pylontech/protocol/tcp_console.py` (exit 0). Then `python -m pytest tests/ -v` (expect 28 passing — parsers unaffected).
+
+- [ ] **Step 7: Review checklist (manual)**
+
+- Constant added; `time` and constant imported.
+- `_stat_cache`/`_stat_deadline` initialised in `__init__` and NOT cleared in `connect`/`disconnect`.
+- Deadline resets and clears the cache when expired; all present packs are fetched in the expiry round, then served from cache for ~30 min; failed fetches are not cached (retry next cycle).
+- `_battery_data_flat` now calls `_stat_for_pack`; `StatCommand` still imported/used.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add custom_components/pylontech/const.py custom_components/pylontech/protocol/tcp_console.py
+git commit -m "perf: poll stat at most every 30 minutes, cache across cycles"
+```
+
+---
+
 ## Manual validation (maintainer, on hardware)
 
 Not automated. After the tasks above, run the branch against the live stack:

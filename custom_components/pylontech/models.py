@@ -77,6 +77,12 @@ class BatteryData:
     # Error code (console protocol)
     error_code: str | None = None
 
+    # Cells actively balancing (console bat command)
+    cells_balancing: int | None = None
+
+    # Summed protection/fault events (console stat command)
+    protection_events: int | None = None
+
 
 @dataclass
 class DeviceInfo:
