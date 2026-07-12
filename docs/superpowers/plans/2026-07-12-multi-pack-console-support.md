@@ -2163,6 +2163,106 @@ git commit -m "perf: poll stat at most every 30 minutes, cache across cycles"
 
 ---
 
+### Task 16: Cell voltage delta sensor (mV)
+
+Add a per-pack sensor for the cell voltage spread (highest − lowest cell voltage) in mV, derived from the flat `pwr` table's own min/max.
+
+**Files:**
+- Modify: `custom_components/pylontech/pylontech.py` (add a property to `PwrPack`)
+- Modify: `custom_components/pylontech/models.py` (add `cell_volt_delta` field)
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`_battery_data_flat`)
+- Modify: `custom_components/pylontech/coordinator.py` (`_flatten_battery_data`)
+- Modify: `custom_components/pylontech/sensor.py` (`SENSOR_MAPPINGS`)
+- Test: `tests/test_pwr_table.py` (add a delta test)
+
+**Interfaces:**
+- Produces: `PwrPack.cell_volt_delta_mv -> int`; `BatteryData.cell_volt_delta: int | None`; a `cell_volt_delta` entry in the coordinator's flattened per-pack data.
+
+- [ ] **Step 1: Write the failing test**
+
+In `tests/test_pwr_table.py`, add:
+
+```python
+def test_pack_cell_voltage_delta_mv():
+    table = pylontech.PwrTableCommand(read_fixture("pwr_flat.txt"))
+    # pack 1: Vlow 3330, Vhigh 3331 -> 1 mV; pack 3: 3324..3333 -> 9 mV
+    assert table.pack(1).cell_volt_delta_mv == 1
+    assert table.pack(3).cell_volt_delta_mv == 9
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `python -m pytest tests/test_pwr_table.py::test_pack_cell_voltage_delta_mv -v`
+Expected: FAIL with `AttributeError: 'PwrPack' object has no attribute 'cell_volt_delta_mv'`.
+
+- [ ] **Step 3: Add the property to `PwrPack`**
+
+In `custom_components/pylontech/pylontech.py`, add a property to the `PwrPack` dataclass (after its fields):
+
+```python
+    @property
+    def cell_volt_delta_mv(self) -> int:
+        """Cell voltage spread (highest - lowest cell voltage) in mV."""
+        return round((self.cell_volt_high - self.cell_volt_low) * 1000)
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `python -m pytest tests/test_pwr_table.py -v`
+Expected: PASS. Then full `python -m pytest tests/ -v` (expect 29 passing).
+
+- [ ] **Step 5: Add the BatteryData field**
+
+In `custom_components/pylontech/models.py`, in `BatteryData`, add after `protection_events`:
+
+```python
+    # Cell voltage spread (highest - lowest) in mV (console pwr table)
+    cell_volt_delta: int | None = None
+```
+
+- [ ] **Step 6: Set it on the flat path**
+
+In `custom_components/pylontech/protocol/tcp_console.py` `_battery_data_flat`, add `cell_volt_delta=pack.cell_volt_delta_mv,` to the `BatteryData(...)` call (e.g. after `cell_volt_high=pack.cell_volt_high,`).
+
+- [ ] **Step 7: Flatten it in the coordinator**
+
+In `custom_components/pylontech/coordinator.py` `_flatten_battery_data`, after the `cell_volt_high` block:
+
+```python
+        if data.cell_volt_high is not None:
+            result["cell_volt_high"] = data.cell_volt_high
+```
+
+add:
+
+```python
+        if data.cell_volt_delta is not None:
+            result["cell_volt_delta"] = data.cell_volt_delta
+```
+
+- [ ] **Step 8: Add the sensor mapping**
+
+In `custom_components/pylontech/sensor.py` `SENSOR_MAPPINGS`, near the `cell_volt_low`/`cell_volt_high` entries, add:
+
+```python
+    "cell_volt_delta": ("Cell Voltage Delta", None, "mV", SensorStateClass.MEASUREMENT),
+```
+
+(No VOLTAGE device class, so it renders as a plain integer mV rather than being forced to 3-decimal volts.)
+
+- [ ] **Step 9: Verify**
+
+Run each `python -m py_compile ...` on the four HA modules (`pylontech.py`, `models.py`, `tcp_console.py`, `coordinator.py`, `sensor.py`) — all exit 0. Then `python -m pytest tests/ -v` (expect 29 passing).
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add custom_components/pylontech/pylontech.py custom_components/pylontech/models.py custom_components/pylontech/protocol/tcp_console.py custom_components/pylontech/coordinator.py custom_components/pylontech/sensor.py tests/test_pwr_table.py
+git commit -m "feat: add per-pack cell voltage delta (mV) sensor"
+```
+
+---
+
 ## Manual validation (maintainer, on hardware)
 
 Not automated. After the tasks above, run the branch against the live stack:
