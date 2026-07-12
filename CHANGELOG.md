@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Per-pack total capacity, cycle count and health statuses from the
   `pwr <index>` detail view.
+- Per-cell voltages and a per-pack cells-balancing count from the
+  `bat <index>` command.
 
 ## [1.1.0] - 2024-11-12
 
