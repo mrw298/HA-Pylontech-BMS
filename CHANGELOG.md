@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Multi-pack console protocol setup on stacks such as the US5000 (issue #2):
+  - Send CR+LF line endings so ser2net-bridged consoles accept commands.
+  - Derive `pack_count` from the `pwr` table instead of leaving it unset.
+  - Add and use a `pack_id` parameter when fetching per-pack data.
+  - Parse the flat multi-pack `pwr` table by pack index, skipping absent slots.
+  - Stop calling the `unit` command unconditionally; it is not supported on
+    all firmware and now degrades gracefully.
+  - Tolerate non-ASCII serial line noise instead of failing the update cycle.
+
+### Added
+- Per-pack total capacity, cycle count and health statuses from the
+  `pwr <index>` detail view.
+
 ## [1.1.0] - 2024-11-12
 
 ### Added

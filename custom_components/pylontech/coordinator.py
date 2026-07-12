@@ -47,13 +47,13 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.protocol = protocol
         self.device_info_model = device_info
         self.serial_nr = device_info.barcode
-        self.pack_count = device_info.pack_count
+        self.pack_count = device_info.pack_count or 1
         self.device_name = device_name
 
         # Create device info for each pack
         self.pack_device_infos = tuple(
             _pack_device(device_info, pack_id, device_name)
-            for pack_id in range(1, device_info.pack_count + 1)
+            for pack_id in range(1, self.pack_count + 1)
         )
         # Store available sensors per pack: {pack_id: {sensor_name: type}}
         self.available_sensors_per_pack: dict[int, dict[str, type]] = {}
@@ -69,7 +69,7 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             result = {}
 
             # Query each pack separately
-            for pack_id in range(1, self.device_info_model.pack_count + 1):
+            for pack_id in range(1, self.pack_count + 1):
                 try:
                     battery_data = await self.protocol.get_battery_data(pack_id=pack_id)
                     pack_data = self._flatten_battery_data(battery_data)
@@ -211,7 +211,7 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.protocol.connect()
 
             # Query each pack to detect available sensors
-            for pack_id in range(1, self.device_info_model.pack_count + 1):
+            for pack_id in range(1, self.pack_count + 1):
                 try:
                     battery_data = await self.protocol.get_battery_data(pack_id=pack_id)
                     result = self._flatten_battery_data(battery_data)

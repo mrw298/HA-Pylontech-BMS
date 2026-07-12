@@ -246,6 +246,130 @@ class PwrCommand:
         return result
 
 
+def _is_present_pwr_row(tokens: list[str]) -> bool:
+    """True for a flat-table data row describing a present pack."""
+    return len(tokens) > 12 and tokens[0].isdigit() and tokens[8] != "Absent"
+
+
+def is_flat_pwr(lines) -> bool:
+    """Return True if a `pwr` response is the flat multi-pack table.
+
+    The flat table has a header row naming the Volt, Curr and Base.St
+    columns. The legacy single-pack format has no such header.
+    """
+    for line in lines:
+        if "Volt" in line and "Curr" in line and "Base.St" in line:
+            return True
+    return False
+
+
+@dataclass
+class PwrPack:
+    """One pack's data from a row of the flat `pwr` table."""
+
+    index: int
+    volt: float  # V
+    curr: float  # A (signed)
+    temp: float  # C
+    cell_temp_low: float  # C
+    cell_temp_high: float  # C
+    cell_volt_low: float  # V
+    cell_volt_high: float  # V
+    base_state: str
+    volt_state: str
+    curr_state: str
+    temp_state: str
+    soc: int  # %
+
+
+class PwrTableCommand:
+    """Parses the flat multi-pack `pwr` table (one row per pack slot).
+
+    Only columns 0 to 12 are read; the Time column (index 13) contains a
+    space, so positional parsing past column 12 is unreliable. Absent slots
+    (Base.St == "Absent") are skipped. Packs are keyed by their reported
+    index so a non-contiguous stack is still addressed correctly.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by parsing every present pack row."""
+        self.packs: dict[int, PwrPack] = {}
+        for line in lines:
+            tokens = line.split()
+            if not _is_present_pwr_row(tokens):
+                continue
+            try:
+                index = int(tokens[0])
+                pack = PwrPack(
+                    index=index,
+                    volt=int(tokens[1]) / 1000,
+                    curr=int(tokens[2]) / 1000,
+                    temp=int(tokens[3]) / 1000,
+                    cell_temp_low=int(tokens[4]) / 1000,
+                    cell_temp_high=int(tokens[5]) / 1000,
+                    cell_volt_low=int(tokens[6]) / 1000,
+                    cell_volt_high=int(tokens[7]) / 1000,
+                    base_state=tokens[8],
+                    volt_state=tokens[9],
+                    curr_state=tokens[10],
+                    temp_state=tokens[11],
+                    soc=int(tokens[12].replace("%", "")),
+                )
+            except (ValueError, IndexError):
+                # A present-looking row with a corrupt numeric field (e.g. serial
+                # noise) is skipped rather than failing the whole table parse.
+                continue
+            self.packs[index] = pack
+
+    @property
+    def pack_count(self) -> int:
+        """Number of present packs."""
+        return len(self.packs)
+
+    def pack(self, pack_id: int) -> PwrPack | None:
+        """Return the pack with this reported index (column 0), or None if absent."""
+        return self.packs.get(pack_id)
+
+
+class PwrDetailCommand:
+    """Parses `pwr <index>` per-pack detail (Key : value unit lines).
+
+    Complementary to the flat table: supplies total capacity, max voltage,
+    cycle count and health statuses, which the flat table does not carry.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by scanning the detail lines for known keys."""
+        self.total_capacity: float | None = None  # Ah
+        self.cycle_count: int | None = None
+        self.max_voltage: float | None = None  # V
+        self.soh_status: str | None = None
+        self.heater_status: str | None = None
+        self.system_fault: str | None = None
+
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, rest = line.partition(":")
+            key = key.strip()
+            tokens = rest.split()
+            value = tokens[0] if tokens else ""
+            if not value:
+                continue
+            if key == "Total Coulomb":
+                self.total_capacity = int(value) / 1000
+            elif key == "Charge Times":
+                self.cycle_count = int(value)
+            elif key == "Max Voltage":
+                self.max_voltage = int(value) / 1000
+            elif key == "Soh. Status":
+                self.soh_status = value
+            elif key == "Heater Status":
+                self.heater_status = value
+            elif key == "System Fault":
+                self.system_fault = value
+
+
 class BatCommand:
     """Pylontech BMS console command 'bat'."""
 
