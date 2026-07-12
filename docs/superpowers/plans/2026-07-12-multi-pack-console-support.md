@@ -949,6 +949,283 @@ git commit -m "docs: changelog for multi-pack console fixes"
 
 ---
 
+### Task 8: Per-cell `bat` parser
+
+Add a parser for the `bat <index>` per-cell table, exposing per-cell voltages and a balancing count.
+
+**Files:**
+- Modify: `custom_components/pylontech/pylontech.py` (add after `PwrDetailCommand`)
+- Create: `tests/fixtures/bat_pack1.txt`
+- Create: `tests/fixtures/bat_pack3.txt`
+- Test: `tests/test_bat_pack.py`
+
+**Interfaces:**
+- Consumes: nothing from other tasks.
+- Produces: `class BatCell` dataclass (`index: int`, `volt: float`, `balancing: bool`); `class BatPackCommand` with `__init__(self, lines)`, attribute `cells: list[BatCell]`, property `cell_voltages -> list[float]`, property `balancing_count -> int`.
+
+- [ ] **Step 1: Create the `bat 1` fixture**
+
+Create `tests/fixtures/bat_pack1.txt` (verbatim capture, header + 15 cell rows, all idle-ish, BAL all N):
+
+```
+Battery  Volt     Curr     Tempr    Base State   Volt. State  Curr. State  Temp. State  SOC          Coulomb      BAL
+0        3465     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+1        3465     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+2        3465     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+3        3455     -149     27800    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+4        3455     -149     27600    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+5        3465     -149     27600    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+6        3464     -149     27600    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+7        3457     -149     27600    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+8        3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+9        3456     -149     27300    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+10       3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+11       3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+12       3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+13       3454     -149     27300    Dischg       Normal       Normal       Normal       100%         92703 mAH      N
+14       3465     -149     27300    Dischg       Normal       Normal       Normal       100%         92713 mAH      N
+```
+
+- [ ] **Step 2: Create the `bat 3` fixture**
+
+Create `tests/fixtures/bat_pack3.txt` (verbatim capture, charging, cell 9 shows a `High` volt state at 3562 mV):
+
+```
+Battery  Volt     Curr     Tempr    Base State   Volt. State  Curr. State  Temp. State  SOC          Coulomb      BAL
+0        3525     388      27400    Charge       Normal       Normal       Normal       100%         45449 mAH      N
+1        3453     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+2        3454     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+3        3455     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+4        3450     388      27400    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+5        3459     388      27300    Charge       Normal       Normal       Normal       99%         44788 mAH      N
+6        3448     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+7        3448     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+8        3449     388      27300    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+9        3562     388      27300    Charge       High         Normal       Normal       100%         45449 mAH      N
+10       3455     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+11       3456     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+12       3457     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+13       3451     388      27200    Charge       Normal       Normal       Normal       97%         44086 mAH      N
+14       3403     388      27200    Charge       Normal       Normal       Normal       100%         45447 mAH      N
+```
+
+- [ ] **Step 3: Write the failing tests**
+
+Create `tests/test_bat_pack.py`:
+
+```python
+import pytest
+
+import pylontech
+from conftest import read_fixture
+
+
+def test_bat_parses_fifteen_cells():
+    bat = pylontech.BatPackCommand(read_fixture("bat_pack1.txt"))
+    assert len(bat.cells) == 15
+    assert len(bat.cell_voltages) == 15
+
+
+def test_bat_cell_voltage_values():
+    bat = pylontech.BatPackCommand(read_fixture("bat_pack1.txt"))
+    assert bat.cell_voltages[0] == pytest.approx(3.465)
+    assert bat.cell_voltages[3] == pytest.approx(3.455)
+
+
+def test_bat_no_cells_balancing_when_all_n():
+    bat = pylontech.BatPackCommand(read_fixture("bat_pack1.txt"))
+    assert bat.balancing_count == 0
+
+
+def test_bat_pack3_high_cell_still_parses():
+    bat = pylontech.BatPackCommand(read_fixture("bat_pack3.txt"))
+    assert len(bat.cells) == 15
+    # Cell 9 reports a High volt state at 3562 mV; voltage still parses.
+    assert bat.cell_voltages[9] == pytest.approx(3.562)
+
+
+def test_bat_balancing_count_counts_y_rows():
+    # Synthetic input (constructed for this test): two cells report BAL=Y.
+    lines = [
+        "Battery  Volt     Curr     Tempr    Base State   Volt. State  Curr. State  Temp. State  SOC          Coulomb      BAL",
+        "0        3465     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      Y",
+        "1        3466     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      N",
+        "2        3467     -149     27800    Dischg       Normal       Normal       Normal       100%         92713 mAH      Y",
+    ]
+    bat = pylontech.BatPackCommand(lines)
+    assert bat.balancing_count == 2
+    assert bat.cell_voltages[0] == pytest.approx(3.465)
+    assert bat.cell_voltages[2] == pytest.approx(3.467)
+```
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+Run: `python -m pytest tests/test_bat_pack.py -v`
+Expected: FAIL with `AttributeError: module 'pylontech' has no attribute 'BatPackCommand'`.
+
+- [ ] **Step 5: Implement the parser**
+
+In `custom_components/pylontech/pylontech.py`, add after the `PwrDetailCommand` class:
+
+```python
+@dataclass
+class BatCell:
+    """One cell's data from a row of the `bat <index>` per-cell table."""
+
+    index: int
+    volt: float  # V
+    balancing: bool
+
+
+class BatPackCommand:
+    """Parses the `bat <index>` per-cell table for one pack.
+
+    Reads only the cell voltage (token 1) and the balancing flag (last
+    token). Using the first, second and last tokens avoids the two-token
+    `Coulomb` field ("92713 mAH"), which would otherwise shift positional
+    indices. Malformed rows are skipped.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by parsing every cell row."""
+        self.cells: list[BatCell] = []
+        for line in lines:
+            tokens = line.split()
+            if len(tokens) < 3 or not tokens[0].isdigit():
+                continue
+            try:
+                cell = BatCell(
+                    index=int(tokens[0]),
+                    volt=int(tokens[1]) / 1000,
+                    balancing=tokens[-1] == "Y",
+                )
+            except (ValueError, IndexError):
+                continue
+            self.cells.append(cell)
+
+    @property
+    def cell_voltages(self) -> list[float]:
+        """Return per-cell voltages in the order the cells were reported."""
+        return [cell.volt for cell in self.cells]
+
+    @property
+    def balancing_count(self) -> int:
+        """Return the number of cells currently balancing."""
+        return sum(1 for cell in self.cells if cell.balancing)
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `python -m pytest tests/test_bat_pack.py -v`
+Expected: PASS (5 passed). Then run the full suite `python -m pytest tests/ -v` (expect 20 passing).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add custom_components/pylontech/pylontech.py tests/test_bat_pack.py tests/fixtures/bat_pack1.txt tests/fixtures/bat_pack3.txt
+git commit -m "feat: parse per-cell bat data (voltages and balancing count)"
+```
+
+---
+
+### Task 9: Wire per-cell data into battery data and sensors
+
+Fetch `bat <pack_id>` on the flat path and surface per-cell voltages and the balancing count as sensors.
+
+**Files:**
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`_battery_data_flat` + import)
+- Modify: `custom_components/pylontech/models.py` (add `cells_balancing` field)
+- Modify: `custom_components/pylontech/coordinator.py` (`_flatten_battery_data`)
+- Modify: `custom_components/pylontech/sensor.py` (`SENSOR_MAPPINGS`)
+
+**Interfaces:**
+- Consumes: `BatPackCommand` from `pylontech` (Task 8); `BatteryData.cell_voltages` (existing), `BatteryData.cells_balancing` (added here).
+- Produces: `cell_voltage_0..N` and `cells_balancing` entries in the coordinator's flattened per-pack data.
+
+- [ ] **Step 1: Add the cells_balancing field to BatteryData**
+
+In `custom_components/pylontech/models.py`, in the `BatteryData` dataclass, add after the `error_code` field:
+
+```python
+    # Cells actively balancing (console bat command)
+    cells_balancing: int | None = None
+```
+
+- [ ] **Step 2: Import BatPackCommand in tcp_console**
+
+In `custom_components/pylontech/protocol/tcp_console.py`, add `BatPackCommand` to the existing `from pylontech import (...)` block (alphabetical order is fine, place it near `BatCommand`).
+
+- [ ] **Step 3: Fetch and merge bat data in the flat path**
+
+In `_battery_data_flat`, after the `detail = PwrDetailCommand(...)` line and before the `remaining = ...` line, add:
+
+```python
+        try:
+            bat = BatPackCommand(await self._exec_cmd(f"bat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'bat <index>'
+            bat = None
+        cell_voltages = bat.cell_voltages if bat is not None else []
+        cells_balancing = bat.balancing_count if bat is not None else None
+```
+
+Then in the `BatteryData(...)` call on the flat path, change `cell_voltages=[],` to `cell_voltages=cell_voltages,` and add `cells_balancing=cells_balancing,` (e.g. immediately after the `cycle_count=detail.cycle_count,` line).
+
+- [ ] **Step 4: Flatten cells_balancing in the coordinator**
+
+In `custom_components/pylontech/coordinator.py`, in `_flatten_battery_data`, after the cycle_count block:
+
+```python
+        # Cycle count (binary protocol)
+        if data.cycle_count is not None:
+            result["cycle_count"] = data.cycle_count
+```
+
+add:
+
+```python
+        # Cells balancing (console bat command)
+        if data.cells_balancing is not None:
+            result["cells_balancing"] = data.cells_balancing
+```
+
+(Cell voltages are already flattened to `cell_voltage_N` by the existing `enumerate(data.cell_voltages)` loop, so no change is needed for those.)
+
+- [ ] **Step 5: Add the sensor mapping**
+
+In `custom_components/pylontech/sensor.py`, in `SENSOR_MAPPINGS`, add near the `cycle_count` entry:
+
+```python
+    "cells_balancing": ("Cells Balancing", None, "cells", SensorStateClass.MEASUREMENT),
+```
+
+(`cell_voltage_N` keys are already handled by the `startswith("cell_voltage_")` branch in `_get_sensor_description`.)
+
+- [ ] **Step 6: Verify**
+
+Run each:
+- `python -m py_compile custom_components/pylontech/protocol/tcp_console.py`
+- `python -m py_compile custom_components/pylontech/models.py`
+- `python -m py_compile custom_components/pylontech/coordinator.py`
+- `python -m py_compile custom_components/pylontech/sensor.py`
+
+All expected: no output (exit 0). Then `python -m pytest tests/ -v` (expect 20 passing — parsers unaffected).
+
+- [ ] **Step 7: Review checklist (manual)**
+
+- `cell_voltages=cell_voltages` (not `[]`) on the flat path; `cells_balancing=cells_balancing` added.
+- `bat` fetch wrapped in try/except (degrades to empty list / None).
+- `cells_balancing` is a valid new field of `BatteryData`; flattened only when not None.
+- The `bat` fetch adds exactly one command per pack (now 13/cycle for 6 packs).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add custom_components/pylontech/protocol/tcp_console.py custom_components/pylontech/models.py custom_components/pylontech/coordinator.py custom_components/pylontech/sensor.py
+git commit -m "feat: surface per-cell voltages and balancing count as sensors"
+```
+
+---
+
 ## Manual validation (maintainer, on hardware)
 
 Not automated. After the tasks above, run the branch against the live stack:

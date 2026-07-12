@@ -148,13 +148,28 @@ The coordinator brackets each cycle with `connect()` then a per-pack loop then
 `disconnect()`. Per connection the protocol will:
 
 1. Fetch the flat `pwr` table **once** and cache it on the protocol instance.
-2. For each pack, fetch `pwr <index>` detail.
+2. For each pack, fetch `pwr <index>` detail and `bat <index>` per-cell data.
 3. Clear the cache on `disconnect()` (and on `connect()`).
 
-For a six-pack stack this is 1 flat + 6 detail = 7 `pwr` commands per 30 s
-cycle, plus `info` once at setup. `get_battery_data(pack_id)` merges the cached
-flat row and the pack's detail into one `BatteryData`. The coordinator loop is
-unchanged.
+For a six-pack stack this is 1 flat + 6 detail + 6 per-cell = 13 commands per
+30 s cycle, plus `info` once at setup. `get_battery_data(pack_id)` merges the
+cached flat row, the pack's detail, and its per-cell data into one
+`BatteryData`. The coordinator loop is unchanged.
+
+### Per-cell data (`bat <index>`)
+
+`bat <index>` returns one row per cell (15 on a US5000 pack): cell index,
+voltage (mV), current, temperature, base/volt/curr/temp states, SOC, coulomb
+(two tokens, e.g. `92713 mAH`), and a balancing flag (`Y`/`N`). Per the chosen
+scope we surface only per-cell **voltages** and a per-pack **count of cells
+balancing** (skipping the redundant per-cell temp/SOC, which the flat table's
+extremes already summarise). A new `BatPackCommand` parser reads the cell
+voltage (token 1) and the balancing flag (last token); using the first, second,
+and last tokens avoids the two-token `Coulomb` field. Cell voltages populate the
+existing `BatteryData.cell_voltages` list (flattened to `cell_voltage_0..N`
+sensors by existing code); the balancing count uses a new
+`cells_balancing` field. The `bat <index>` fetch is wrapped so a device that
+rejects it degrades to no cell data rather than failing.
 
 ### Parsing (in `pylontech.py`, no Home Assistant imports)
 
@@ -250,8 +265,8 @@ here.
   target stack. Non-contiguous slots would need the coordinator to iterate the
   set of actually-present indices rather than a range.
 - The legacy header-format path is preserved but unverified.
-- 7 commands per cycle is heavier than a single-command design; acceptable at a
-  30 s interval.
+- 13 commands per cycle (1 flat + 6 detail + 6 per-cell) is heavier than a
+  single-command design; acceptable at a 30 s interval.
 
 ## Current sign convention (confirmed)
 
