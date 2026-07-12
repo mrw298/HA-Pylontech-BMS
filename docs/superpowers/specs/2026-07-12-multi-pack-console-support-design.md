@@ -185,6 +185,32 @@ rejects it degrades to no cell data rather than failing.
   the Basic/Volt/Current/Tmpr/Coul/Soh statuses, Heater status, and System
   Fault. Unit conversions: mV→V, mA→A, mC→C, mAh→Ah.
 
+### Per-pack device identity (`info <index>`)
+
+Originally `get_device_info()` called plain `info` once and the coordinator
+cloned that single result to every pack, so a mixed stack (e.g. pack 2 =
+US5000, pack 3 = US2000C) showed the same model/serial/firmware on every pack
+device. Two defects:
+
+- **Global metadata.** Fix: fetch `info <pack_id>` per pack at setup (static
+  data, fetched once, not per cycle) and build each pack's Home Assistant
+  device from its own metadata (model, real barcode as serial, firmware,
+  hardware version, cell count).
+- **Fragile `InfoCommand` parse.** The parser matched each field only against
+  the current first line and advanced only on a match, so an unexpected line
+  (`Board : NF4.E3`, present between `Board version` and `Main Soft version`
+  in `info <index>` output) stalled it: everything after that line
+  (`Main Soft version`, `Barcode`, `Cell Number`, ...) failed to parse,
+  surfacing as "Unknown". Fix: parse order-independently by building a
+  whitespace-normalised `key -> value` dict from the `key : value` lines, then
+  reading known keys. Barcode is read from the `Barcode` field (with
+  `Module Barcode` as a fallback).
+
+Device and entity identities therefore change to real per-pack barcodes; the
+entity `unique_id` scheme is bumped (`-v3`) so Home Assistant recreates
+entities with correct identities. The config-entry identity is left unchanged
+so the integration instance is not re-onboarded.
+
 ### Protocol layer (`protocol/tcp_console.py`)
 
 - `_exec_cmd`: send `cmd + "\r\n"` (defect 1).

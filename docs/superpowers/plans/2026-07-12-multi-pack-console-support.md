@@ -1226,6 +1226,508 @@ git commit -m "feat: surface per-cell voltages and balancing count as sensors"
 
 ---
 
+### Task 10: Order-tolerant `InfoCommand` parsing
+
+Rewrite `InfoCommand` so it parses the `info`/`info <index>` output by key, tolerating unexpected/reordered lines (which currently derail it and cause "Unknown" barcode/firmware).
+
+**Files:**
+- Modify: `custom_components/pylontech/pylontech.py` (replace `InfoCommand.__init__`, keep `__str__`)
+- Create: `tests/fixtures/info_pack2.txt`
+- Create: `tests/fixtures/info_pack3.txt`
+- Test: `tests/test_info.py`
+
+**Interfaces:**
+- Produces: `InfoCommand(lines)` exposing the same attributes as before (`device_address`, `manufacturer`, `device_name`, `board_version`, `hard_version`, `main_sw_version`, `sw_version`, `boot_version`, `comm_version`, `release_date`, `barcode`, `pcba_barcode`, `module_barcode`, `pwr_supply_barcode`, `device_test_time`, `specification`, `cell_number`, `max_discharge_current`, `max_charge_current`, `shut_circuit`, `relay_feedback`, `new_board`, `bmu_modules`, `bmu_pcbas`), each a `Sensor` with `.value` (or a list), but parsed order-independently.
+
+- [ ] **Step 1: Create the `info 2` fixture (US5000)**
+
+Create `tests/fixtures/info_pack2.txt` (verbatim capture, blank line dropped as `_exec_cmd` would):
+
+```
+Device address      : 2
+Manufacturer        : Pylon
+Device name         : US5000
+Board version       : V10R04
+Board               : NF4.E3
+Main Soft version   : B69.16.0.0
+Soft  version       : V1.3
+Boot  version       : V1.0
+Comm version        : V2.0
+Release Date        : 22-08-10
+Barcode             : Y230102C50000001
+Specification       : 48V/100AH
+Cell Number         : 15
+Max Dischg Curr     : -100000mA
+Max Charge Curr     : 100000mA
+EPONPort rate       : 1200
+Console Port rate   : 115200
+```
+
+- [ ] **Step 2: Create the `info 3` fixture (US2000C)**
+
+Create `tests/fixtures/info_pack3.txt`:
+
+```
+Device address      : 3
+Manufacturer        : Pylon
+Device name         : US2000C
+Board version       : V10R04
+Board               : NF4.E2
+Main Soft version   : B69.13.0.0
+Soft  version       : V1.4
+Boot  version       : V1.0
+Comm version        : V2.0
+Release Date        : 22-01-24
+Barcode             : K22D087C32000002
+Specification       : 48V/50AH
+Cell Number         : 15
+Max Dischg Curr     : -90000mA
+Max Charge Curr     : 90000mA
+EPONPort rate       : 1200
+Console Port rate   : 115200
+```
+
+- [ ] **Step 3: Write the failing tests**
+
+Create `tests/test_info.py`:
+
+```python
+import pylontech
+from conftest import read_fixture
+
+
+def test_info_pack2_us5000_all_fields():
+    info = pylontech.InfoCommand(read_fixture("info_pack2.txt"))
+    assert info.device_address.value == 2
+    assert info.manufacturer.value == "Pylon"
+    assert info.device_name.value == "US5000"
+    assert info.board_version.value == "V10R04"
+    assert info.main_sw_version.value == "B69.16.0.0"
+    assert info.sw_version.value == "V1.3"
+    assert info.barcode.value == "Y230102C50000001"
+    assert info.cell_number.value == 15
+    assert info.max_charge_current.value == 100000
+    assert info.max_discharge_current.value == -100000
+
+
+def test_info_pack3_us2000c():
+    info = pylontech.InfoCommand(read_fixture("info_pack3.txt"))
+    assert info.device_name.value == "US2000C"
+    assert info.barcode.value == "K22D087C32000002"
+    assert info.main_sw_version.value == "B69.13.0.0"
+    assert info.cell_number.value == 15
+    assert info.device_address.value == 3
+
+
+def test_info_not_derailed_by_unexpected_board_line():
+    # The 'Board : NF4.E3' line sits between 'Board version' and 'Main Soft
+    # version'. Under the old sequential parser it stalled parsing and left
+    # barcode/firmware None. Order-independent parsing must read them.
+    info = pylontech.InfoCommand(read_fixture("info_pack2.txt"))
+    assert info.barcode.value is not None
+    assert info.main_sw_version.value is not None
+    assert info.hard_version.value is None  # no 'Hard version' line present
+```
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+Run: `python -m pytest tests/test_info.py -v`
+Expected: FAIL — under the current sequential parser, `info.barcode.value` is `None` (the `Board` line stalls parsing), so the assertions fail.
+
+- [ ] **Step 5: Replace `InfoCommand.__init__`**
+
+In `custom_components/pylontech/pylontech.py`, replace the body of `InfoCommand.__init__` (the current sequential `.fetch(source)` calls and the bmu scan) with the order-independent version below. Keep the class docstring and the `__str__` method as they are.
+
+```python
+    def __init__(self, lines: tuple[str]) -> None:
+        """Initialize the info command.
+
+        Parses the `key : value` lines into a dict keyed by the
+        whitespace-normalised label, so unexpected or reordered lines (for
+        example a `Board` line between `Board version` and `Main Soft
+        version`) do not derail the parse.
+        """
+        fields: dict[str, str] = {}
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            fields[" ".join(key.split())] = value.strip()
+
+        def text(label: str) -> Text:
+            sensor = Text(label)
+            if fields.get(label):
+                sensor.value = fields[label]
+            return sensor
+
+        def integer(label: str) -> Integer:
+            sensor = Integer(label)
+            raw = fields.get(label)
+            if raw:
+                try:
+                    sensor.value = int(raw)
+                except ValueError:
+                    pass
+            return sensor
+
+        def current(label: str) -> Current:
+            sensor = Current(label)
+            raw = fields.get(label)
+            if raw:
+                try:
+                    sensor.value = int(raw.replace("mA", "").strip())
+                except ValueError:
+                    pass
+            return sensor
+
+        self.device_address = integer("Device address")
+        self.manufacturer = text("Manufacturer")
+        self.device_name = text("Device name")
+        self.board_version = text("Board version")
+        self.hard_version = text("Hard version")
+        self.main_sw_version = text("Main Soft version")
+        self.sw_version = text("Soft version")
+        self.boot_version = text("Boot version")
+        self.comm_version = text("Comm version")
+        self.release_date = text("Release Date")
+        self.barcode = text("Barcode")
+        self.pcba_barcode = text("PCBA Barcode")
+        self.module_barcode = text("Module Barcode")
+        self.pwr_supply_barcode = text("PowerSupply Barcode")
+        self.device_test_time = text("Device Test Time")
+        self.specification = text("Specification")
+        self.cell_number = integer("Cell Number")
+        self.max_discharge_current = current("Max Dischg Curr")
+        self.max_charge_current = current("Max Charge Curr")
+        self.shut_circuit = text("Shut Circuit")
+        self.relay_feedback = text("Relay Feedback")
+        self.new_board = text("New Board")
+
+        self.bmu_modules: list[str] = []
+        self.bmu_pcbas: list[str] = []
+        for line in lines:
+            if line.startswith("Module"):
+                self.bmu_modules.insert(0, line.split()[2])
+            if line.startswith("PCBA"):
+                self.bmu_pcbas.insert(0, line.split()[2])
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `python -m pytest tests/test_info.py -v`
+Expected: PASS (3 passed). Then run the full suite `python -m pytest tests/ -v` (expect 23 passing).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add custom_components/pylontech/pylontech.py tests/test_info.py tests/fixtures/info_pack2.txt tests/fixtures/info_pack3.txt
+git commit -m "fix: parse info output order-independently (fixes Unknown barcode/firmware)"
+```
+
+---
+
+### Task 11: Per-pack `info <index>` fetch in the protocol
+
+Let `get_device_info` fetch a specific pack's info and prefer the `Barcode` field.
+
+**Files:**
+- Modify: `custom_components/pylontech/protocol/tcp_console.py` (`info` and `get_device_info`)
+
+**Interfaces:**
+- Consumes: order-tolerant `InfoCommand` (Task 10).
+- Produces: `info(self, pack_id: int | None = None)`; `get_device_info(self, pack_id: int | None = None) -> DeviceInfo` (per-pack when `pack_id` given; `pack_count` computed only for the top-level call).
+
+- [ ] **Step 1: Make `info` accept a pack id**
+
+Replace the existing `info` method:
+
+```python
+    async def info(self) -> InfoCommand:
+        """Invoke 'info' console command."""
+        return InfoCommand(await self._exec_cmd("info"))
+```
+
+with:
+
+```python
+    async def info(self, pack_id: int | None = None) -> InfoCommand:
+        """Invoke the 'info' console command, optionally for one pack."""
+        cmd = "info" if pack_id is None else f"info {pack_id}"
+        return InfoCommand(await self._exec_cmd(cmd))
+```
+
+- [ ] **Step 2: Make `get_device_info` per-pack aware**
+
+Replace the `get_device_info` method's signature and body so it takes an optional `pack_id`, only computes `pack_count` for the top-level (no-id) call, and prefers the `Barcode` field:
+
+```python
+    async def get_device_info(self, pack_id: int | None = None) -> DeviceInfo:
+        """Retrieve device information.
+
+        With no `pack_id`, returns the top-level info and computes `pack_count`
+        from the flat `pwr` table. With a `pack_id`, returns that pack's own
+        metadata (`info <pack_id>`) and leaves `pack_count` unset.
+        """
+        info = await self.info(pack_id)
+
+        if pack_id is None:
+            pwr_lines = await self._pwr_table_lines()
+            pack_count = (
+                PwrTableCommand(pwr_lines).pack_count if is_flat_pwr(pwr_lines) else 1
+            )
+        else:
+            pack_count = None
+
+        barcode = info.barcode.value or info.module_barcode.value or "Unknown"
+        firmware = info.main_sw_version.value or info.sw_version.value or "Unknown"
+
+        return DeviceInfo(
+            manufacturer=info.manufacturer.value if info.manufacturer.value else "Pylontech",
+            model=info.device_name.value if info.device_name.value else "Unknown",
+            barcode=barcode,
+            firmware_version=firmware,
+            connection_type=ConnectionType.TCP_CONSOLE,
+            variant=BatteryVariant.PYLONTECH_STANDARD,
+            pack_count=pack_count,
+            device_name=info.device_name.value,
+            hardware_version=info.hard_version.value,
+            device_address=info.device_address.value,
+            cell_count=info.cell_number.value,
+            max_charge_current=info.max_charge_current.value,
+            max_discharge_current=info.max_discharge_current.value,
+            bmu_modules=list(info.bmu_modules),
+            bmu_pcbas=list(info.bmu_pcbas),
+        )
+```
+
+- [ ] **Step 3: Verify**
+
+Run: `python -m py_compile custom_components/pylontech/protocol/tcp_console.py` (exit 0), then `python -m pytest tests/ -v` (expect 23 passing).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add custom_components/pylontech/protocol/tcp_console.py
+git commit -m "feat: fetch per-pack info via 'info <index>', prefer Barcode field"
+```
+
+---
+
+### Task 12: Per-pack device identity in setup, coordinator and sensors
+
+Fetch each pack's info at setup and give each pack device its own model/serial/firmware; recreate entities with real per-pack barcodes.
+
+**Files:**
+- Modify: `custom_components/pylontech/__init__.py` (fetch per-pack infos, pass to coordinator)
+- Modify: `custom_components/pylontech/coordinator.py` (`__init__`, `_pack_device`, add `_pack_serial` / `pack_serial`)
+- Modify: `custom_components/pylontech/sensor.py` (entity `unique_id`)
+
+**Interfaces:**
+- Consumes: `protocol.get_device_info(pack_id)` (Task 11).
+- Produces: `PylontechUpdateCoordinator(..., pack_infos: dict[int, DeviceInfo] | None = None)`; `coordinator.pack_serial(pack_id) -> str`.
+
+- [ ] **Step 1: Fetch per-pack infos in setup**
+
+In `custom_components/pylontech/__init__.py`, in `async_setup_entry`, replace the connect/get-info block:
+
+```python
+    try:
+        await protocol.connect()
+        device_info = await protocol.get_device_info()
+        _LOGGER.info(
+            "Successfully connected to %s %s (barcode: %s, firmware: %s)",
+            device_info.manufacturer,
+            device_info.model,
+            device_info.barcode,
+            device_info.firmware_version,
+        )
+    except Exception as err:
+        _LOGGER.error("Failed to connect to Pylontech BMS: %s", err)
+        raise ConfigEntryNotReady from err
+    finally:
+        await protocol.disconnect()
+
+    # Create update coordinator
+    device_name = entry.data.get(CONF_DEVICE_NAME, "Battery")
+    coordinator = PylontechUpdateCoordinator(hass, entry, protocol, device_info, device_name)
+```
+
+with:
+
+```python
+    try:
+        await protocol.connect()
+        device_info = await protocol.get_device_info()
+        _LOGGER.info(
+            "Successfully connected to %s %s (barcode: %s, firmware: %s)",
+            device_info.manufacturer,
+            device_info.model,
+            device_info.barcode,
+            device_info.firmware_version,
+        )
+        # Fetch each pack's own metadata so mixed stacks show correct
+        # per-pack model/serial/firmware. Static data, fetched once.
+        pack_infos: dict[int, DeviceInfo] = {}
+        for pack_id in range(1, (device_info.pack_count or 1) + 1):
+            try:
+                pack_infos[pack_id] = await protocol.get_device_info(pack_id)
+            except Exception as err:  # noqa: BLE001 - fall back to top-level info
+                _LOGGER.warning("Failed to fetch info for pack %d: %s", pack_id, err)
+                pack_infos[pack_id] = device_info
+    except Exception as err:
+        _LOGGER.error("Failed to connect to Pylontech BMS: %s", err)
+        raise ConfigEntryNotReady from err
+    finally:
+        await protocol.disconnect()
+
+    # Create update coordinator
+    device_name = entry.data.get(CONF_DEVICE_NAME, "Battery")
+    coordinator = PylontechUpdateCoordinator(
+        hass, entry, protocol, device_info, device_name, pack_infos
+    )
+```
+
+Add `DeviceInfo` to the imports at the top of `__init__.py`:
+
+```python
+from .models import DeviceInfo
+```
+
+(place it near the other local imports, e.g. after the `from .coordinator import ...` line).
+
+- [ ] **Step 2: Accept and use per-pack infos in the coordinator**
+
+In `custom_components/pylontech/coordinator.py`, change the `__init__` signature to add `pack_infos`:
+
+```python
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        protocol: ProtocolBase,
+        device_info: DeviceInfo,
+        device_name: str = "Battery",
+        pack_infos: dict[int, DeviceInfo] | None = None,
+    ) -> None:
+```
+
+Then replace the body from `self.serial_nr = ...` down to the `pack_device_infos` assignment with:
+
+```python
+        self.protocol = protocol
+        self.device_info_model = device_info
+        self.pack_infos = pack_infos or {}
+        self.pack_count = device_info.pack_count or 1
+        self.device_name = device_name
+
+        # Integration identity: prefer a real per-pack barcode over the
+        # top-level info's barcode (which may be "Unknown" on some firmware).
+        first = self.pack_infos.get(1)
+        self.serial_nr = (
+            first.barcode
+            if first is not None and first.barcode and first.barcode != "Unknown"
+            else device_info.barcode
+        )
+
+        # Create device info for each pack from that pack's own metadata.
+        self.pack_device_infos = tuple(
+            _pack_device(self._pack_info(pack_id), pack_id, device_name)
+            for pack_id in range(1, self.pack_count + 1)
+        )
+        # Store available sensors per pack: {pack_id: {sensor_name: type}}
+        self.available_sensors_per_pack: dict[int, dict[str, type]] = {}
+```
+
+(The existing lines `self.protocol = protocol` and `self.device_info_model = device_info` are part of this replaced block; do not duplicate them.)
+
+- [ ] **Step 3: Add pack-info and pack-serial helpers to the coordinator**
+
+Add these two methods to `PylontechUpdateCoordinator` (e.g. after `sensor_value`):
+
+```python
+    def _pack_info(self, pack_id: int) -> DeviceInfo:
+        """Return a pack's own DeviceInfo, falling back to the top-level info."""
+        return self.pack_infos.get(pack_id, self.device_info_model)
+
+    def pack_serial(self, pack_id: int) -> str:
+        """Return the stable per-pack serial (real barcode where available)."""
+        return _pack_serial(self._pack_info(pack_id), pack_id)
+```
+
+- [ ] **Step 4: Rework `_pack_device` and add `_pack_serial`**
+
+In `coordinator.py`, replace the `_pack_device` function with a version that keys the device by the pack's real barcode, and add a shared `_pack_serial` helper just above it:
+
+```python
+def _pack_serial(info: DeviceInfo, pack_id: int) -> str:
+    """Return the pack serial: its real barcode, or a stable fallback."""
+    if info.barcode and info.barcode != "Unknown":
+        return info.barcode
+    return f"Unknown_pack{pack_id}"
+
+
+def _pack_device(info: DeviceInfo, pack_id: int, device_name: str = "Battery") -> HADeviceInfo:
+    """Create Home Assistant device info for one battery pack.
+
+    Args:
+        info: That pack's own DeviceInfo.
+        pack_id: Pack ID (1-based).
+        device_name: Custom base name for the device (default: "Battery").
+
+    Returns:
+        Home Assistant DeviceInfo for the pack.
+    """
+    pack_serial = _pack_serial(info, pack_id)
+    return HADeviceInfo(
+        identifiers={(DOMAIN, pack_serial)},
+        name=f"{info.manufacturer} {device_name} Pack {pack_id}",
+        model=info.model,
+        manufacturer=info.manufacturer,
+        sw_version=info.firmware_version,
+        hw_version=info.hardware_version,
+        serial_number=pack_serial,
+    )
+```
+
+- [ ] **Step 5: Use the per-pack serial in entity unique_id**
+
+In `custom_components/pylontech/sensor.py`, replace:
+
+```python
+        # Set unique ID including pack ID
+        # Added v2 suffix to force recreation of entities with correct naming
+        self._attr_unique_id = f"{sensor_key}-pack{pack_id}-{coordinator.serial_nr}-v2"
+```
+
+with:
+
+```python
+        # Unique ID keyed by the pack's real barcode so each physical pack's
+        # entities are stable. v3 forces recreation after the identity fix.
+        self._attr_unique_id = f"{sensor_key}-{coordinator.pack_serial(pack_id)}-v3"
+```
+
+- [ ] **Step 6: Verify**
+
+Run each `python -m py_compile ...` on the three changed modules (`__init__.py`, `coordinator.py`, `sensor.py`) — all exit 0. Then `python -m pytest tests/ -v` (expect 23 passing — parsers unaffected).
+
+- [ ] **Step 7: Review checklist (manual)**
+
+- Setup fetches `info <pack_id>` for each pack, falling back to the top-level info on failure.
+- Coordinator builds each pack device from that pack's own info; `pack_serial`/`_pack_serial` used consistently by both `_pack_device` and the entity `unique_id`.
+- `serial_nr` prefers a real pack-1 barcode.
+- Entity `unique_id` bumped to `-v3` and keyed by the real per-pack barcode.
+- Config-entry unique_id / config_flow untouched.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add custom_components/pylontech/__init__.py custom_components/pylontech/coordinator.py custom_components/pylontech/sensor.py
+git commit -m "feat: per-pack device identity from info <index> (model/serial/firmware)"
+```
+
+---
+
 ## Manual validation (maintainer, on hardware)
 
 Not automated. After the tasks above, run the branch against the live stack:
