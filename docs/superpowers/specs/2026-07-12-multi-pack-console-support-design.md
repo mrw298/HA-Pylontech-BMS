@@ -235,6 +235,11 @@ Home Assistant). Fixtures are the verbatim captures above.
   would grab).
 - `info` parses barcode and firmware version.
 
+A charging/discharging fixture (a `pwr` capture with non-zero `Curr` and a
+`Base.St` of `Charge`/`Discharge`) will be added as a further test case when
+the maintainer can capture it, to verify a non-idle row and the current sign
+convention. It is not required to land the core fix.
+
 Manual validation: the maintainer will run the branch against the live stack
 and confirm entities populate. Live Home Assistant testing is not automated
 here.
@@ -245,6 +250,10 @@ here.
   target stack. Non-contiguous slots would need the coordinator to iterate the
   set of actually-present indices rather than a range.
 - The legacy header-format path is preserved but unverified.
+- The current sign convention (whether charge is positive or negative in the
+  `Curr` column) is unverified, because all captured data is idle at 0 A. The
+  parser will read the value as a signed integer and compute power as
+  `V * A`; the sign's meaning will be confirmed against a charging capture.
 - 7 commands per cycle is heavier than a single-command design; acceptable at a
   30 s interval.
 
