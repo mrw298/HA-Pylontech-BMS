@@ -413,6 +413,57 @@ class BatPackCommand:
         return sum(1 for cell in self.cells if cell.balancing)
 
 
+# Protection/fault event counters summed into one diagnostic total. Excludes
+# informational counters (charge/idle/status counts, cycle count, SOH, etc.).
+_STAT_PROTECTION_KEYS = (
+    "COC Times", "COC2 Times", "DOC Times", "DOC2 Times",
+    "COCA Times", "DOCA Times", "SC Times",
+    "Bat OV Times", "Bat HV Times", "Bat LV Times", "Bat UV Times",
+    "Pwr OV Times", "Pwr HV Times", "Pwr LV Times", "Pwr UV Times",
+    "COT Times", "CUT Times", "DOT Times", "DUT Times",
+    "CHT Times", "CLT Times", "DHT Times", "DLT Times",
+    "Input OV Times",
+)
+
+
+class StatCommand:
+    """Parses the `stat <index>` per-pack statistics table.
+
+    Order-independent key/value parse, tolerating line noise (e.g. a corrupted
+    `LifeWa}&(` label) and the colon-less `Device address` line. Exposes the
+    real cycle count (`CYCLE Times`) and a summed protection/fault-event count.
+    """
+
+    def __init__(self, lines) -> None:
+        """Initialize by parsing the key/value statistics lines."""
+        fields: dict[str, str] = {}
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            fields[" ".join(key.split())] = value.strip()
+
+        def as_int(label: str) -> int | None:
+            raw = fields.get(label)
+            if raw is None:
+                return None
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+
+        self.cycle_count: int | None = as_int("CYCLE Times")
+
+        total = 0
+        seen = False
+        for key in _STAT_PROTECTION_KEYS:
+            value = as_int(key)
+            if value is not None:
+                total += value
+                seen = True
+        self.protection_events: int | None = total if seen else None
+
+
 class BatCommand:
     """Pylontech BMS console command 'bat'."""
 
