@@ -119,9 +119,10 @@ class TCPConsoleProtocol(ProtocolBase):
         """Invoke 'bat' console command."""
         return BatCommand(await self._exec_cmd("bat"))
 
-    async def info(self) -> InfoCommand:
-        """Invoke 'info' console command."""
-        return InfoCommand(await self._exec_cmd("info"))
+    async def info(self, pack_id: int | None = None) -> InfoCommand:
+        """Invoke the 'info' console command, optionally for one pack."""
+        cmd = "info" if pack_id is None else f"info {pack_id}"
+        return InfoCommand(await self._exec_cmd(cmd))
 
     async def pwr(self) -> PwrCommand:
         """Invoke 'pwr' console command."""
@@ -137,24 +138,31 @@ class TCPConsoleProtocol(ProtocolBase):
             self._pwr_lines = await self._exec_cmd("pwr")
         return self._pwr_lines
 
-    async def get_device_info(self) -> DeviceInfo:
-        """Retrieve device information from info command.
+    async def get_device_info(self, pack_id: int | None = None) -> DeviceInfo:
+        """Retrieve device information.
 
-        Returns:
-            DeviceInfo with manufacturer, model, version, barcode, etc.
+        With no `pack_id`, returns the top-level info and computes `pack_count`
+        from the flat `pwr` table. With a `pack_id`, returns that pack's own
+        metadata (`info <pack_id>`) and leaves `pack_count` unset.
         """
-        info = await self.info()
+        info = await self.info(pack_id)
 
-        pwr_lines = await self._pwr_table_lines()
-        pack_count = (
-            PwrTableCommand(pwr_lines).pack_count if is_flat_pwr(pwr_lines) else 1
-        )
+        if pack_id is None:
+            pwr_lines = await self._pwr_table_lines()
+            pack_count = (
+                PwrTableCommand(pwr_lines).pack_count if is_flat_pwr(pwr_lines) else 1
+            )
+        else:
+            pack_count = None
+
+        barcode = info.barcode.value or info.module_barcode.value or "Unknown"
+        firmware = info.main_sw_version.value or info.sw_version.value or "Unknown"
 
         return DeviceInfo(
             manufacturer=info.manufacturer.value if info.manufacturer.value else "Pylontech",
             model=info.device_name.value if info.device_name.value else "Unknown",
-            barcode=info.module_barcode.value if info.module_barcode.value else "Unknown",
-            firmware_version=info.main_sw_version.value if info.main_sw_version.value else "Unknown",
+            barcode=barcode,
+            firmware_version=firmware,
             connection_type=ConnectionType.TCP_CONSOLE,
             variant=BatteryVariant.PYLONTECH_STANDARD,
             pack_count=pack_count,
