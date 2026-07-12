@@ -27,6 +27,7 @@ from pylontech import (
     PwrCommand,
     PwrDetailCommand,
     PwrTableCommand,
+    StatCommand,
     UnitCommand,
     Sensor,
     is_flat_pwr,
@@ -221,6 +222,13 @@ class TCPConsoleProtocol(ProtocolBase):
         if detail.system_fault is not None:
             status_groups["system_fault"] = detail.system_fault
 
+        try:
+            stat = StatCommand(await self._exec_cmd(f"stat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'stat <index>'
+            stat = None
+        cycle_count = stat.cycle_count if stat is not None else None
+        protection_events = stat.protection_events if stat is not None else None
+
         return BatteryData(
             pack_voltage=pack.volt,
             pack_current=pack.curr,
@@ -242,6 +250,8 @@ class TCPConsoleProtocol(ProtocolBase):
             cell_temp_high=pack.cell_temp_high,
             cells_balancing=cells_balancing,
             status_groups=status_groups,
+            cycle_count=cycle_count,
+            protection_events=protection_events,
         )
 
     async def _battery_data_legacy(self, pwr_lines: tuple[str, ...]) -> BatteryData:

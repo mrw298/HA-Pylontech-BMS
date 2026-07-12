@@ -193,6 +193,10 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if data.cycle_count is not None:
             result["cycle_count"] = data.cycle_count
 
+        # Protection/fault event summary (console stat command)
+        if data.protection_events is not None:
+            result["protection_events"] = data.protection_events
+
         # Cells balancing (console bat command)
         if data.cells_balancing is not None:
             result["cells_balancing"] = data.cells_balancing

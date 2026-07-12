@@ -80,6 +80,9 @@ class BatteryData:
     # Cells actively balancing (console bat command)
     cells_balancing: int | None = None
 
+    # Summed protection/fault events (console stat command)
+    protection_events: int | None = None
+
 
 @dataclass
 class DeviceInfo:
