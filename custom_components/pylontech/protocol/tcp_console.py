@@ -240,7 +240,6 @@ class TCPConsoleProtocol(ProtocolBase):
             cell_volt_high=pack.cell_volt_high,
             cell_temp_low=pack.cell_temp_low,
             cell_temp_high=pack.cell_temp_high,
-            cycle_count=detail.cycle_count,
             cells_balancing=cells_balancing,
             status_groups=status_groups,
         )
@@ -316,7 +315,6 @@ class TCPConsoleProtocol(ProtocolBase):
             dc_voltage=pwr.dc_voltage.value,
             bat_voltage=pwr.bat_voltage.value,
             error_code=pwr.error_code.value,
-            cycle_count=None,
         )
 
     def __repr__(self) -> str:

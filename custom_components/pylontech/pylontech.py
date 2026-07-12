@@ -341,7 +341,6 @@ class PwrDetailCommand:
     def __init__(self, lines) -> None:
         """Initialize by scanning the detail lines for known keys."""
         self.total_capacity: float | None = None  # Ah
-        self.cycle_count: int | None = None
         self.max_voltage: float | None = None  # V
         self.soh_status: str | None = None
         self.heater_status: str | None = None
@@ -358,8 +357,6 @@ class PwrDetailCommand:
                 continue
             if key == "Total Coulomb":
                 self.total_capacity = int(value) / 1000
-            elif key == "Charge Times":
-                self.cycle_count = int(value)
             elif key == "Max Voltage":
                 self.max_voltage = int(value) / 1000
             elif key == "Soh. Status":
