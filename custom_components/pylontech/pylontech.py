@@ -476,37 +476,72 @@ class InfoCommand:
     """Pylontech BMS console command 'info'."""
 
     def __init__(self, lines: tuple[str]) -> None:
-        """Initialize the info command."""
-        source = list(lines)
-        self.device_address = Integer("Device address").fetch(source)
-        self.manufacturer = Text("Manufacturer").fetch(source)
-        self.device_name = Text("Device name").fetch(source)
-        self.board_version = Text("Board version").fetch(source)
-        self.hard_version = Text("Hard version").fetch(source, "Hard  version")
-        self.main_sw_version = Text("Main Soft version").fetch(source)
-        self.sw_version = Text("Soft version").fetch(source, "Soft  version")
-        self.boot_version = Text("Boot version").fetch(source, "Boot  version")
-        self.comm_version = Text("Comm version").fetch(source)
-        self.release_date = Text("Release Date").fetch(source)
-        self.barcode = Text("Barcode").fetch(source)
-        self.pcba_barcode = Text("PCBA Barcode").fetch(source)
-        self.module_barcode = Text("Module Barcode").fetch(source)
-        self.pwr_supply_barcode = Text("PowerSupply Barcode").fetch(source)
-        self.device_test_time = Text("Device Test Time").fetch(source)
-        self.specification = Text("Specification").fetch(source)
-        self.cell_number = Integer("Cell Number").fetch(source)
-        self.max_discharge_current = Current("Max Discharge Curr").fetch(
-            source, "Max Dischg Curr"
-        )
-        self.max_charge_current = Current("Max Charge Curr").fetch(source)
-        self.shut_circuit = Text("Shut Circuit").fetch(source)
-        self.relay_feedback = Text("Relay Feedback").fetch(source)
-        self.new_board = Text("New Board").fetch(source)
+        """Initialize the info command.
 
-        self.bmu_modules: tuple[str] = []
-        self.bmu_pcbas: tuple[str] = []
+        Parses the `key : value` lines into a dict keyed by the
+        whitespace-normalised label, so unexpected or reordered lines (for
+        example a `Board` line between `Board version` and `Main Soft
+        version`) do not derail the parse.
+        """
+        fields: dict[str, str] = {}
+        for line in lines:
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            fields[" ".join(key.split())] = value.strip()
 
-        for line in source:
+        def text(label: str) -> Text:
+            sensor = Text(label)
+            if fields.get(label):
+                sensor.value = fields[label]
+            return sensor
+
+        def integer(label: str) -> Integer:
+            sensor = Integer(label)
+            raw = fields.get(label)
+            if raw:
+                try:
+                    sensor.value = int(raw)
+                except ValueError:
+                    pass
+            return sensor
+
+        def current(label: str) -> Current:
+            sensor = Current(label)
+            raw = fields.get(label)
+            if raw:
+                try:
+                    sensor.value = int(raw.replace("mA", "").strip())
+                except ValueError:
+                    pass
+            return sensor
+
+        self.device_address = integer("Device address")
+        self.manufacturer = text("Manufacturer")
+        self.device_name = text("Device name")
+        self.board_version = text("Board version")
+        self.hard_version = text("Hard version")
+        self.main_sw_version = text("Main Soft version")
+        self.sw_version = text("Soft version")
+        self.boot_version = text("Boot version")
+        self.comm_version = text("Comm version")
+        self.release_date = text("Release Date")
+        self.barcode = text("Barcode")
+        self.pcba_barcode = text("PCBA Barcode")
+        self.module_barcode = text("Module Barcode")
+        self.pwr_supply_barcode = text("PowerSupply Barcode")
+        self.device_test_time = text("Device Test Time")
+        self.specification = text("Specification")
+        self.cell_number = integer("Cell Number")
+        self.max_discharge_current = current("Max Dischg Curr")
+        self.max_charge_current = current("Max Charge Curr")
+        self.shut_circuit = text("Shut Circuit")
+        self.relay_feedback = text("Relay Feedback")
+        self.new_board = text("New Board")
+
+        self.bmu_modules: list[str] = []
+        self.bmu_pcbas: list[str] = []
+        for line in lines:
             if line.startswith("Module"):
                 self.bmu_modules.insert(0, line.split()[2])
             if line.startswith("PCBA"):
