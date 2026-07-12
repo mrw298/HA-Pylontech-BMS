@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Stop calling the `unit` command unconditionally; it is not supported on
     all firmware and now degrades gracefully.
   - Tolerate non-ASCII serial line noise instead of failing the update cycle.
+  - Show correct per-pack device identity (model, serial/barcode, firmware,
+    cell count) via `info <index>`, instead of cloning one value to every
+    pack. Fixes mixed stacks (e.g. US5000 + US2000C) and the "Unknown"
+    barcode/firmware caused by an order-sensitive `info` parser. Entity
+    unique IDs are bumped (`-v3`), so stale "Unknown" devices/entities from
+    earlier versions should be deleted after upgrading.
 
 ### Added
 - Per-pack total capacity, cycle count and health statuses from the
