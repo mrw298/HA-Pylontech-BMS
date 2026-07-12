@@ -27,6 +27,7 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         protocol: ProtocolBase,
         device_info: DeviceInfo,
         device_name: str = "Battery",
+        pack_infos: dict[int, DeviceInfo] | None = None,
     ) -> None:
         """Initialize update coordinator.
 
@@ -36,6 +37,7 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             protocol: Protocol instance (console or binary)
             device_info: Device information from protocol
             device_name: Custom base name for devices (default: "Battery")
+            pack_infos: Per-pack device information keyed by pack ID (1-based)
         """
         super().__init__(
             hass,
@@ -46,13 +48,22 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.protocol = protocol
         self.device_info_model = device_info
-        self.serial_nr = device_info.barcode
+        self.pack_infos = pack_infos or {}
         self.pack_count = device_info.pack_count or 1
         self.device_name = device_name
 
-        # Create device info for each pack
+        # Integration identity: prefer a real per-pack barcode over the
+        # top-level info's barcode (which may be "Unknown" on some firmware).
+        first = self.pack_infos.get(1)
+        self.serial_nr = (
+            first.barcode
+            if first is not None and first.barcode and first.barcode != "Unknown"
+            else device_info.barcode
+        )
+
+        # Create device info for each pack from that pack's own metadata.
         self.pack_device_infos = tuple(
-            _pack_device(device_info, pack_id, device_name)
+            _pack_device(self._pack_info(pack_id), pack_id, device_name)
             for pack_id in range(1, self.pack_count + 1)
         )
         # Store available sensors per pack: {pack_id: {sensor_name: type}}
@@ -249,24 +260,40 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return None
         return self.data[pack_key].get(sensor)
 
+    def _pack_info(self, pack_id: int) -> DeviceInfo:
+        """Return a pack's own DeviceInfo, falling back to the top-level info."""
+        return self.pack_infos.get(pack_id, self.device_info_model)
+
+    def pack_serial(self, pack_id: int) -> str:
+        """Return the stable per-pack serial (real barcode where available)."""
+        return _pack_serial(self._pack_info(pack_id), pack_id)
+
+
+def _pack_serial(info: DeviceInfo, pack_id: int) -> str:
+    """Return the pack serial: its real barcode, or a stable fallback."""
+    if info.barcode and info.barcode != "Unknown":
+        return info.barcode
+    return f"Unknown_pack{pack_id}"
+
 
 def _pack_device(info: DeviceInfo, pack_id: int, device_name: str = "Battery") -> HADeviceInfo:
-    """Create device info for individual battery pack.
+    """Create Home Assistant device info for one battery pack.
 
     Args:
-        info: Main device info
-        pack_id: Pack ID (1-based)
+        info: That pack's own DeviceInfo.
+        pack_id: Pack ID (1-based).
         device_name: Custom base name for the device (default: "Battery")
 
     Returns:
-        Home Assistant DeviceInfo dictionary for pack
+        Home Assistant DeviceInfo for the pack.
     """
-    pack_serial = f"{info.barcode}_pack{pack_id}"
+    pack_serial = _pack_serial(info, pack_id)
     return HADeviceInfo(
         identifiers={(DOMAIN, pack_serial)},
         name=f"{info.manufacturer} {device_name} Pack {pack_id}",
         model=info.model,
         manufacturer=info.manufacturer,
         sw_version=info.firmware_version,
+        hw_version=info.hardware_version,
         serial_number=pack_serial,
     )

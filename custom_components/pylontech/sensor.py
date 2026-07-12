@@ -252,9 +252,9 @@ class PylontechSensorEntity(
         self._sensor_key = sensor_key
         self._pack_id = pack_id
 
-        # Set unique ID including pack ID
-        # Added v2 suffix to force recreation of entities with correct naming
-        self._attr_unique_id = f"{sensor_key}-pack{pack_id}-{coordinator.serial_nr}-v2"
+        # Unique ID keyed by the pack's real barcode so each physical pack's
+        # entities are stable. v3 forces recreation after the identity fix.
+        self._attr_unique_id = f"{sensor_key}-{coordinator.pack_serial(pack_id)}-v3"
 
         # Set device info for this pack to group entities under pack devices
         pack_idx = pack_id - 1  # Convert to 0-based index

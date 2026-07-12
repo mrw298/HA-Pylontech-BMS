@@ -19,6 +19,7 @@ from .const import (
     VARIANT_STANDARD,
 )
 from .coordinator import PylontechUpdateCoordinator
+from .models import DeviceInfo
 from .protocol import ProtocolBase, TCPBinaryProtocol, TCPConsoleProtocol
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +65,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             device_info.barcode,
             device_info.firmware_version,
         )
+        # Fetch each pack's own metadata so mixed stacks show correct
+        # per-pack model/serial/firmware. Static data, fetched once.
+        pack_infos: dict[int, DeviceInfo] = {}
+        for pack_id in range(1, (device_info.pack_count or 1) + 1):
+            try:
+                pack_infos[pack_id] = await protocol.get_device_info(pack_id)
+            except Exception as err:  # noqa: BLE001 - fall back to top-level info
+                _LOGGER.warning("Failed to fetch info for pack %d: %s", pack_id, err)
+                pack_infos[pack_id] = device_info
     except Exception as err:
         _LOGGER.error("Failed to connect to Pylontech BMS: %s", err)
         raise ConfigEntryNotReady from err
@@ -72,7 +82,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Create update coordinator
     device_name = entry.data.get(CONF_DEVICE_NAME, "Battery")
-    coordinator = PylontechUpdateCoordinator(hass, entry, protocol, device_info, device_name)
+    coordinator = PylontechUpdateCoordinator(
+        hass, entry, protocol, device_info, device_name, pack_infos
+    )
 
     # Detect available sensors
     await coordinator.detect_sensors()
