@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detail view.
 - Per-cell voltages and a per-pack cells-balancing count from the
   `bat <index>` command.
+- Real per-pack cycle count (from `stat <index>` `CYCLE Times`) and a summed
+  protection/fault-event diagnostic sensor (~0 on healthy packs, large on a
+  failing one). Note: this raises the console poll to ~19 commands per cycle
+  for a six-pack stack, so on slow serial/ser2net links updates may space out.
 
 ## [1.1.0] - 2024-11-12
 
