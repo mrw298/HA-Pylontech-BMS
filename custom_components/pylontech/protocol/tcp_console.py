@@ -22,6 +22,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from pylontech import (
     BatCommand,
+    BatPackCommand,
     InfoCommand,
     PwrCommand,
     PwrDetailCommand,
@@ -188,6 +189,14 @@ class TCPConsoleProtocol(ProtocolBase):
             raise ValueError(f"Pack {pack_id} not present in pwr output")
 
         detail = PwrDetailCommand(await self._exec_cmd(f"pwr {pack_id}"))
+
+        try:
+            bat = BatPackCommand(await self._exec_cmd(f"bat {pack_id}"))
+        except Exception:  # noqa: BLE001 - device may not support 'bat <index>'
+            bat = None
+        cell_voltages = bat.cell_voltages if bat is not None else []
+        cells_balancing = bat.balancing_count if bat is not None else None
+
         remaining = (
             detail.total_capacity * pack.soc / 100
             if detail.total_capacity is not None
@@ -211,7 +220,7 @@ class TCPConsoleProtocol(ProtocolBase):
             power=pack.volt * pack.curr,
             temperatures={"pack": pack.temp},
             avg_temperature=None,
-            cell_voltages=[],
+            cell_voltages=cell_voltages,
             cell_temps=[],
             base_state=pack.base_state,
             volt_state=pack.volt_state,
@@ -222,6 +231,7 @@ class TCPConsoleProtocol(ProtocolBase):
             cell_temp_low=pack.cell_temp_low,
             cell_temp_high=pack.cell_temp_high,
             cycle_count=detail.cycle_count,
+            cells_balancing=cells_balancing,
             status_groups=status_groups,
         )
 

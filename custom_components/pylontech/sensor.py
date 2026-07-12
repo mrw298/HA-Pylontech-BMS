@@ -94,6 +94,9 @@ SENSOR_MAPPINGS: dict[str, tuple[str, SensorDeviceClass | None, str | None, Sens
     # Cycle count (binary protocol)
     "cycle_count": ("Cycle Count", None, "cycles", SensorStateClass.TOTAL_INCREASING),
 
+    # Cells balancing (console bat command)
+    "cells_balancing": ("Cells Balancing", None, "cells", SensorStateClass.MEASUREMENT),
+
     # Status groups (binary protocol) - show active flags or "Normal"
     "protect_status": ("Protection Status", None, None, None),
     "system_status": ("System Status", None, None, None),

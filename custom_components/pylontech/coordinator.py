@@ -182,6 +182,10 @@ class PylontechUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if data.cycle_count is not None:
             result["cycle_count"] = data.cycle_count
 
+        # Cells balancing (console bat command)
+        if data.cells_balancing is not None:
+            result["cells_balancing"] = data.cells_balancing
+
         # Cell voltages (binary protocol)
         for idx, voltage in enumerate(data.cell_voltages):
             result[f"cell_voltage_{idx}"] = voltage
