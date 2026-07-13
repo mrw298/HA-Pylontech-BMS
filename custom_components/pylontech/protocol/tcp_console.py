@@ -311,41 +311,59 @@ class TCPConsoleProtocol(ProtocolBase):
         }
 
         return BatteryData(
+            # Pack-level measurements
             pack_voltage=pwr.volt.value,
             pack_current=pwr.curr.value,
             soc=pwr.charge_ah_perc.value,
+            # Capacity
             remaining_capacity=pwr.charge_ah.value,
             total_capacity=None,
+            # Power (calculated)
             power=pwr.volt.value * pwr.curr.value
             if pwr.volt.value and pwr.curr.value
             else None,
+            # Temperatures
             temperatures=temperatures,
             avg_temperature=pwr.avg_temp.value,
+            # Cell-level data
             cell_voltages=cell_voltages,
             cell_temps=cell_temps,
+            # Battery states
             base_state=pwr.base_state.value,
             volt_state=pwr.volt_state.value,
             curr_state=pwr.curr_state.value,
             temp_state=pwr.temp_state.value,
+            # Cell states
             cell_volt_state=pwr.cell_volt_state.value,
             cell_temp_state=pwr.cell_temp_state.value,
+            # Unit states
             unit_volt_state=pwr.unit_volt_state.value,
             unit_temp_state=pwr.unit_temp_state.value,
+            # Charge metrics
             charge_ah=pwr.charge_ah.value,
             charge_ah_perc=pwr.charge_ah_perc.value,
             charge_wh=pwr.charge_wh_wh.value,
             charge_wh_perc=pwr.charge_wh_perc.value,
+            # Voltage extremes
             cell_volt_low=pwr.cell_volt_low.value,
             cell_volt_high=pwr.cell_bolt_high.value,
             unit_volt_low=pwr.unit_volt_low.value,
             unit_volt_high=pwr.unit_volt_high.value,
+            # Temperature extremes
             cell_temp_low=pwr.cell_temp_low.value,
             cell_temp_high=pwr.cell_temp_high.value,
             unit_temp_low=pwr.unit_temp_low.value,
             unit_temp_high=pwr.unit_temp_high.value,
+            # DC voltage
             dc_voltage=pwr.dc_voltage.value,
             bat_voltage=pwr.bat_voltage.value,
+            # Error code
             error_code=pwr.error_code.value,
+            # Note: BatteryData has no 'alarms' field, so the console
+            # protocol's previously-invalid alarms={} kwarg is intentionally
+            # omitted (it would raise TypeError).
+            # Cycle count - not available on the legacy console path
+            cycle_count=None,
         )
 
     def __repr__(self) -> str:
